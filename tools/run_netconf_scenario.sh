@@ -11,7 +11,9 @@ set -euo pipefail
 #   --mode     normal | timeout   (default: normal)
 #   --interval loop interval in seconds (default: 60)
 #   --count    number of iterations, 0 = infinite (default: 3)
-#   --timeout  NETCONF timeout in seconds, timeout mode only (default: 5)
+#   --timeout  NETCONF timeout in seconds applied to DialSSHTimeout (default: 10)
+#              Matches the value hardcoded in typical collector_agent deployments.
+#              Change this to observe how different timeout values affect behavior.
 #   --delay    mock response delay in seconds, timeout mode only (default: 15)
 #   --host     NETCONF mock host (default: localhost)
 #   --port     NETCONF mock port (default: 830)
@@ -28,7 +30,7 @@ CLIENT_BIN="${REPO_ROOT}/netconf-client"
 MODE="normal"
 INTERVAL=60
 COUNT=3
-NETCONF_TIMEOUT=5
+TIMEOUT=10
 MOCK_DELAY=15
 HOST="localhost"
 PORT=830
@@ -51,7 +53,7 @@ while [[ $# -gt 0 ]]; do
         --mode)       MODE="$2";             shift 2 ;;
         --interval)   INTERVAL="$2";         shift 2 ;;
         --count)      COUNT="$2";            shift 2 ;;
-        --timeout)    NETCONF_TIMEOUT="$2";  shift 2 ;;
+        --timeout)    TIMEOUT="$2";           shift 2 ;;
         --delay)      MOCK_DELAY="$2";       shift 2 ;;
         --host)       HOST="$2";             shift 2 ;;
         --port)       PORT="$2";             shift 2 ;;
@@ -109,7 +111,7 @@ done
 # Configure mock for timeout mode
 # ---------------------------------------------------------------------------
 if [[ "${MODE}" == "timeout" ]]; then
-    log "INFO " "Enabling delays (mock delay=${MOCK_DELAY}s, NETCONF timeout=${NETCONF_TIMEOUT}s)"
+    log "INFO " "Enabling delays (mock delay=${MOCK_DELAY}s, NETCONF timeout=${TIMEOUT}s)"
     curl -sf -X POST "${MOCK_URL}/set_use_delays" > /dev/null
     curl -sf -X POST "${MOCK_URL}/delays_range" \
         -H "Content-Type: application/json" \
@@ -133,7 +135,7 @@ else
     COUNT_LABEL="${COUNT}"
 fi
 
-log "INFO " "Starting netconf scenario (mode=${MODE}, count=${COUNT_LABEL}, interval=${INTERVAL}s)"
+log "INFO " "Starting netconf scenario (mode=${MODE}, count=${COUNT_LABEL}, interval=${INTERVAL}s, timeout=${TIMEOUT}s)"
 
 while true; do
     ITERATION=$((ITERATION + 1))
@@ -149,11 +151,7 @@ while true; do
 
     log "INFO " "--- Iteration ${ITER_LABEL} ---"
 
-    if [[ "${MODE}" == "timeout" ]]; then
-        TIMEOUT_FLAG="${NETCONF_TIMEOUT}s"
-    else
-        TIMEOUT_FLAG="10s"
-    fi
+    TIMEOUT_FLAG="${TIMEOUT}s"
 
     set +e
     NETCONF_DEBUG=1 "${CLIENT_BIN}" \
