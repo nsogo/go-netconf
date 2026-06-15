@@ -59,7 +59,6 @@ func (t *TransportBasicIO) SetVersion(version string) {
 func (t *TransportBasicIO) Send(data []byte) error {
 	var seperator []byte
 	var dataInfo []byte
-	//headlen := 0
 	if t.version == "v1.1" {
 		seperator = append(seperator, []byte(msgSeperator_v11)...)
 	} else {
@@ -69,13 +68,12 @@ func (t *TransportBasicIO) Send(data []byte) error {
 	if t.version == "v1.1" {
 		header := fmt.Sprintf("\n#%d\n", len(string(data)))
 		dataInfo = append(dataInfo, header...)
-		//t.Write([]byte(header))
-		//headlen = len([]byte(header))
 	}
 	dataInfo = append(dataInfo, data...)
 	dataInfo = append(dataInfo, seperator...)
-	_, err := t.Write(dataInfo)
 
+	debugf("Send (%d bytes): %s", len(data), string(data))
+	_, err := t.Write(dataInfo)
 	return err
 }
 
@@ -86,7 +84,14 @@ func (t *TransportBasicIO) Receive() ([]byte, error) {
 	} else {
 		seperator = append(seperator, []byte(msgSeperator)...)
 	}
-	return t.WaitForBytes([]byte(seperator))
+	debugf("Receive: waiting for delimiter %q", string(seperator))
+	data, err := t.WaitForBytes([]byte(seperator))
+	if err != nil {
+		debugf("Receive error: %v", err)
+	} else {
+		debugf("Receive (%d bytes): %s", len(data), string(data))
+	}
+	return data, err
 }
 
 func (t *TransportBasicIO) SendHello(hello *HelloMessage) error {
@@ -128,18 +133,21 @@ func (t *TransportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, err
 		n, err := t.Read(buf[pos : pos+(len(buf)/2)])
 		if err != nil {
 			if err != io.EOF {
+				debugf("WaitForFunc read error: %v", err)
 				return nil, err
 			}
 			// Handle EOF but no message separator to mark
 			// the end of the message
 			if n == 0 {
 				out.Write(buf[0:pos])
+				debugf("WaitForFunc EOF: returning %d bytes", out.Len())
 				return out.Bytes(), nil
 			}
 			break
 		}
 
 		if n > 0 {
+			debugf("WaitForFunc: read %d bytes (total buffered: %d)", n, pos+n)
 			end, err := f(buf[0 : pos+n])
 			if err != nil {
 				return nil, err
@@ -147,6 +155,7 @@ func (t *TransportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, err
 
 			if end > -1 {
 				out.Write(buf[0:end])
+				debugf("WaitForFunc: delimiter found, returning %d bytes", out.Len())
 				return out.Bytes(), nil
 			}
 
@@ -159,6 +168,7 @@ func (t *TransportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, err
 		}
 	}
 
+	debugf("WaitForFunc failed: no delimiter found")
 	return nil, fmt.Errorf("WaitForFunc failed")
 }
 

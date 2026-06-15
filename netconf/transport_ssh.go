@@ -48,7 +48,9 @@ func (t *TransportSSH) Close() error {
 
 	// Close the SSH Session if we have one
 	if t.sshSession != nil {
+		debugf("SSH: closing session")
 		if err := t.sshSession.Close(); err != nil {
+			debugf("SSH: session close error: %v", err)
 			// If we receive an error when trying to close the session, then
 			// lets try to close the socket, otherwise it will be left open
 			if !t.managedSession {
@@ -56,10 +58,12 @@ func (t *TransportSSH) Close() error {
 			}
 			return err
 		}
+		debugf("SSH: session closed")
 	}
 
 	// Close the socket
 	if !t.managedSession && t.sshClient != nil {
+		debugf("SSH: closing client connection")
 		return t.sshClient.Close()
 	}
 	return fmt.Errorf("No connection to close")
@@ -79,12 +83,15 @@ func (t *TransportSSH) Dial(target string, config *ssh.ClientConfig) error {
 		target = fmt.Sprintf("%s:%d", target, sshDefaultPort)
 	}
 
+	debugf("SSH Dial: connecting to %s", target)
 	var err error
 
 	t.sshClient, err = ssh.Dial("tcp", target, config)
 	if err != nil {
+		debugf("SSH Dial error: %v", err)
 		return err
 	}
+	debugf("SSH Dial: connected to %s", target)
 
 	err = t.setupSession()
 	return err
@@ -93,8 +100,10 @@ func (t *TransportSSH) Dial(target string, config *ssh.ClientConfig) error {
 func (t *TransportSSH) setupSession() error {
 	var err error
 
+	debugf("SSH: creating new session")
 	t.sshSession, err = t.sshClient.NewSession()
 	if err != nil {
+		debugf("SSH: NewSession error: %v", err)
 		return err
 	}
 
@@ -109,7 +118,14 @@ func (t *TransportSSH) setupSession() error {
 	}
 
 	t.ReadWriteCloser = NewReadWriteCloser(reader, writer)
-	return t.sshSession.RequestSubsystem(sshNetconfSubsystem)
+	debugf("SSH: requesting subsystem %q", sshNetconfSubsystem)
+	err = t.sshSession.RequestSubsystem(sshNetconfSubsystem)
+	if err != nil {
+		debugf("SSH: RequestSubsystem error: %v", err)
+	} else {
+		debugf("SSH: subsystem %q established", sshNetconfSubsystem)
+	}
+	return err
 }
 
 // NewSSHSession creates a new NETCONF session using an existing net.Conn.

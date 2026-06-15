@@ -37,21 +37,27 @@ func (s *Session) Exec(methods ...RPCMethod) (*RPCReply, error) {
 		return nil, err
 	}
 
+	debugf("Exec: sending RPC message-id=%s", rpc.MessageID)
 	err = s.Transport.Send(request)
 	if err != nil {
+		debugf("Exec: Send error: %v", err)
 		return nil, err
 	}
 
+	debugf("Exec: waiting for RPC reply message-id=%s", rpc.MessageID)
 	rawXML, err := s.Transport.Receive()
 	if err != nil {
+		debugf("Exec: Receive error: %v", err)
 		return nil, err
 	}
 
 	reply, err := newRPCReply(rawXML, s.ErrOnWarning, rpc.MessageID)
 	if err != nil {
+		debugf("Exec: RPC reply error: %v", err)
 		return nil, err
 	}
 
+	debugf("Exec: RPC completed successfully message-id=%s", rpc.MessageID)
 	return reply, nil
 }
 
@@ -61,11 +67,14 @@ func NewSession(t Transport) *Session {
 	s.Transport = t
 
 	// Receive Servers Hello message
+	debugf("Session: receiving server Hello")
 	serverHello, _ := t.ReceiveHello()
 	s.SessionID = serverHello.SessionID
 	s.ServerCapabilities = serverHello.Capabilities
+	debugf("Session: server Hello received, session-id=%d, capabilities=%v", s.SessionID, s.ServerCapabilities)
 
 	// Send our hello using default capabilities.
+	debugf("Session: sending client Hello")
 	t.SendHello(&HelloMessage{Capabilities: DefaultCapabilities})
 
 	// Set Transport version
@@ -76,6 +85,14 @@ func NewSession(t Transport) *Session {
 			break
 		}
 	}
+	debugf("Session: negotiated NETCONF version %q", func() string {
+		for _, c := range s.ServerCapabilities {
+			if strings.Contains(c, "urn:ietf:params:netconf:base:1.1") {
+				return "v1.1"
+			}
+		}
+		return "v1.0"
+	}())
 
 	return s
 }
