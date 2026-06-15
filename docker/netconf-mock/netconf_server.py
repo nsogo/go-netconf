@@ -31,7 +31,6 @@ HELLO_REPLY = '''\
 <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <capabilities>
     <capability>urn:ietf:params:netconf:base:1.0</capability>
-    <capability>urn:ietf:params:netconf:base:1.1</capability>
   </capabilities>
   <session-id>{}</session-id>
 </hello>

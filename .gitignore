@@ -1,1 +1,4 @@
 .idea/
+
+# ビルド成果物
+netconf-client
