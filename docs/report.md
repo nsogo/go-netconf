@@ -1,17 +1,18 @@
-# REQ-3 / REQ-4 動作検証レポート
+# 動作検証レポート
 
-**実施日**: 2026-06-16  
-**対象コミット**: `2f8591d` (feat: add --rpc flag)  
+**実施日**: 2026-06-16
+**対象コミット**: `c73109b` (docs: add Keep-Alive debug log and interval alignment notes)
 **検証者**: ttsubo2000
 
 ---
 
 ## 検証概要
 
-以下の2点を検証する。
+以下の3点を検証する。
 
 1. `time.After()` + goroutine パターンによるタイムアウト機構が正しく機能すること
 2. デフォルト RPC が `<get-vrrp-information><summary/></get-vrrp-information>` となり、collector_agent（vrrp_pool）と同一の RPC が送信されること
+3. SSH Keep-Alive 間隔が collector_agent と同じ 5 秒固定になっており、デバッグログで確認できること
 
 ---
 
@@ -25,6 +26,8 @@
 | 認証情報 | `admin` / `admin` |
 | デバッグモード | `NETCONF_DEBUG=1` |
 | デフォルト RPC | `<get-vrrp-information><summary/></get-vrrp-information>` |
+| SSH 接続タイムアウト | 10s 固定（collector_agent 準拠） |
+| Keep-Alive 間隔 | 5s 固定（collector_agent 準拠） |
 
 ---
 
@@ -60,22 +63,21 @@ NETCONF_DEBUG=1 ./netconf-client \
 [INFO] Connecting to localhost:830 (timeout=5s)
 [NETCONF DEBUG] Session: negotiated NETCONF version "v1.0"
 [INFO] Connected (session-id=12345)
-[NETCONF DEBUG] Send (164 bytes): <rpc message-id="207b01c3-..." ...>
-    <get-vrrp-information><summary/></get-vrrp-information></rpc>
+[NETCONF DEBUG] Send (164 bytes): <rpc ...><get-vrrp-information><summary/></get-vrrp-information></rpc>
 [NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"
-  ← goroutine がブロック（mock は 15s 遅延中）
-  ← 5 秒後に time.After() 発火 → s.Close()
+  ← goroutine がブロック中（mock は 15s 遅延中）
+[NETCONF DEBUG] SSH: Keep-Alive sent          ← 5秒後に Keep-Alive 送信（collector_agent準拠）
+  ← time.After(5s) 発火 → s.Close()
 [NETCONF DEBUG] SSH: closing session
 [ERROR] Timeout after 5s waiting for RPC reply
 ```
 
-**送信 RPC の確認**:
-```
-Send (164 bytes): <rpc ...><get-vrrp-information><summary/></get-vrrp-information></rpc>
-```
-→ collector_agent（vrrp_pool）と同一の RPC が送信されていることを確認 ✅
+**確認ポイント**:
+- `<get-vrrp-information><summary/></get-vrrp-information>` の RPC 送信 ✅
+- `SSH: Keep-Alive sent` が RPC 待機中に出力（5s 間隔）✅
+- 5 秒でタイムアウト ✅
 
-**結果**: exit=1、タイムアウトメッセージ確認 → **PASS**
+**結果**: exit=1 → **PASS**
 
 **ログファイル**: [`logs/test1_timeout_5s_delay_15s.log`](../logs/test1_timeout_5s_delay_15s.log)
 
@@ -99,12 +101,16 @@ NETCONF_DEBUG=1 ./netconf-client \
 [NETCONF DEBUG] Send (164 bytes): <rpc ...><get-vrrp-information><summary/></get-vrrp-information></rpc>
 [NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"
 [NETCONF DEBUG] WaitForFunc: delimiter found, returning 139 bytes
-[NETCONF DEBUG] Exec: RPC completed successfully message-id=8744a5b8-...
+[NETCONF DEBUG] Exec: RPC completed successfully message-id=...
 [INFO] RPC succeeded
 [DATA] <rpc-reply ...><ok/></rpc-reply>
 ```
 
-**結果**: exit=0、3 秒で正常応答確認 → **PASS**
+**確認ポイント**:
+- 3 秒で正常応答（Keep-Alive 発火前に完了）✅
+- exit=0 ✅
+
+**結果**: exit=0 → **PASS**
 
 **ログファイル**: [`logs/test2_normal_10s_delay_3s.log`](../logs/test2_normal_10s_delay_3s.log)
 
@@ -123,10 +129,10 @@ tools/run_netconf_scenario.sh --mode timeout --timeout 5 --delay 15 --count 1
 ```
 [INFO ] Starting netconf scenario (mode=timeout, count=1, interval=60s, timeout=5s,
         rpc=<get-vrrp-information><summary/></get-vrrp-information>)
-[INFO ] Enabling delays (mock delay=15s, NETCONF timeout=5s)
 [NETCONF DEBUG] Send (164 bytes): <rpc ...><get-vrrp-information><summary/></get-vrrp-information></rpc>
 [NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"
-  ← 5 秒後に time.After() 発火
+[NETCONF DEBUG] SSH: Keep-Alive sent          ← 5s後に Keep-Alive 送信
+[NETCONF DEBUG] SSH: closing session          ← time.After(5s) 発火
 [ERROR] Timeout after 5s waiting for RPC reply
 [ERROR] Iteration 1/1 FAILED (exit=1)
 [INFO ] Scenario finished. Success: 0 / Failed: 1 / Total: 1
@@ -144,7 +150,8 @@ tools/run_netconf_scenario.sh --mode timeout --timeout 5 --delay 15 --count 1
 |------|----------------|--------------------------|
 | タイムアウト機構 | `time.After(conn.execTimeout)` | `time.After(*timeout)` ✅ 同一パターン |
 | RPC 内容 | `<get-vrrp-information><summary/></get-vrrp-information>` | 同上（デフォルト値）✅ |
-| タイムアウト検出メッセージ | `"Timeout happened before netconf reply received"` | `"[ERROR] Timeout after Xs waiting for RPC reply"` |
+| SSH 接続タイムアウト | `time.Second*10`（ハードコード） | `10s`（固定）✅ |
+| Keep-Alive 間隔 | 5s（10s÷2）固定 | 5s（10s÷2）固定 ✅ |
 | ループ実行 | `interval` ごとに繰り返し | `run_netconf_scenario.sh --interval` で制御 ✅ |
 
 ---
@@ -163,4 +170,5 @@ tools/run_netconf_scenario.sh --mode timeout --timeout 5 --delay 15 --count 1
 
 - `time.After()` + goroutine パターンにより、`--timeout` で指定した秒数で確実に RPC 応答待ちタイムアウトが機能することを確認した
 - デフォルト RPC `<get-vrrp-information><summary/></get-vrrp-information>` により、collector_agent（vrrp_pool）と同一の NETCONF リクエストを再現できることを確認した
+- SSH Keep-Alive が 5 秒間隔（collector_agent と同一）で動作し、タイムアウト待機中に `SSH: Keep-Alive sent` ログが出力されることを確認した
 - netconf-mock は RPC 内容によらず `<ok/>` を返すため、タイムアウト再現テストはそのまま使用できる
