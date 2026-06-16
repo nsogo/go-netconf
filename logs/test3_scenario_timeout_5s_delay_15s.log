@@ -1,9 +1,10 @@
 # Test 3: シナリオスクリプト タイムアウト再現
-# 実行日時: 2026-06-16 09:17:44
+# 実行日時: 2026-06-16 09:35:55
 # 期待結果: タイムアウト再現 (Scenario finished. Success: 0 / Failed: 1)
 # コマンド: tools/run_netconf_scenario.sh --mode timeout --timeout 5 --delay 15 --count 1
+# RPC: <get-vrrp-information><summary/></get-vrrp-information> (デフォルト)
 ---
-[2026-06-16 09:17:44] [INFO ] Starting netconf-mock...
+[2026-06-16 09:35:55] [INFO ] Starting netconf-mock...
 Compose can now delegate builds to bake for better performance.
  To do so, set COMPOSE_BAKE=true.
 #0 building with "default" instance using docker driver
@@ -29,19 +30,19 @@ Compose can now delegate builds to bake for better performance.
 #6 transferring context: 74B done
 #6 DONE 0.0s
 
-#7 [netconf-mock 3/7] WORKDIR /opt/netconf-mock
+#7 [netconf-mock 2/7] RUN apt-get update  && apt-get install -y --no-install-recommends         libffi-dev         openssh-client  && apt-get clean  && rm -rf /var/lib/apt/lists/*
 #7 CACHED
 
-#8 [netconf-mock 5/7] RUN pip install --no-cache-dir -r requirements.txt
+#8 [netconf-mock 4/7] COPY requirements.txt .
 #8 CACHED
 
-#9 [netconf-mock 4/7] COPY requirements.txt .
+#9 [netconf-mock 5/7] RUN pip install --no-cache-dir -r requirements.txt
 #9 CACHED
 
-#10 [netconf-mock 6/7] COPY netconf_server.py .
+#10 [netconf-mock 3/7] WORKDIR /opt/netconf-mock
 #10 CACHED
 
-#11 [netconf-mock 2/7] RUN apt-get update  && apt-get install -y --no-install-recommends         libffi-dev         openssh-client  && apt-get clean  && rm -rf /var/lib/apt/lists/*
+#11 [netconf-mock 6/7] COPY netconf_server.py .
 #11 CACHED
 
 #12 [netconf-mock 7/7] RUN ssh-keygen -t rsa -b 2048 -f /opt/netconf-mock/netconf_rsa.key -N ""
@@ -59,43 +60,43 @@ Compose can now delegate builds to bake for better performance.
  Container netconf-mock  Created
  Container netconf-mock  Starting
  Container netconf-mock  Started
-[2026-06-16 09:17:44] [INFO ] Waiting for netconf-mock to be ready at http://localhost:8088 ...
-[2026-06-16 09:17:46] [INFO ] netconf-mock is ready
-[2026-06-16 09:17:46] [INFO ] Enabling delays (mock delay=15s, NETCONF timeout=5s)
-[2026-06-16 09:17:46] [INFO ] Delay configured: mock will wait 15s before responding
-[2026-06-16 09:17:46] [INFO ] Starting netconf scenario (mode=timeout, count=1, interval=60s, timeout=5s)
-[2026-06-16 09:17:46] [INFO ] --- Iteration 1/1 ---
+[2026-06-16 09:35:55] [INFO ] Waiting for netconf-mock to be ready at http://localhost:8088 ...
+[2026-06-16 09:35:58] [INFO ] netconf-mock is ready
+[2026-06-16 09:35:58] [INFO ] Enabling delays (mock delay=15s, NETCONF timeout=5s)
+[2026-06-16 09:35:58] [INFO ] Delay configured: mock will wait 15s before responding
+[2026-06-16 09:35:58] [INFO ] Starting netconf scenario (mode=timeout, count=1, interval=60s, timeout=5s, rpc=<get-vrrp-information><summary/></get-vrrp-information>)
+[2026-06-16 09:35:58] [INFO ] --- Iteration 1/1 ---
 [INFO] Connecting to localhost:830 (timeout=5s)
-[NETCONF DEBUG] 2026/06/16 09:17:46.082149 SSH: creating new session
-[NETCONF DEBUG] 2026/06/16 09:17:46.082636 SSH: requesting subsystem "netconf"
-[NETCONF DEBUG] 2026/06/16 09:17:46.082961 SSH: subsystem "netconf" established
-[NETCONF DEBUG] 2026/06/16 09:17:46.082969 Session: receiving server Hello
-[NETCONF DEBUG] 2026/06/16 09:17:46.082970 Receive: waiting for delimiter "]]>]]>"
-[NETCONF DEBUG] 2026/06/16 09:17:46.128377 WaitForFunc: read 202 bytes (total buffered: 202)
-[NETCONF DEBUG] 2026/06/16 09:17:46.128385 WaitForFunc: delimiter found, returning 195 bytes
-[NETCONF DEBUG] 2026/06/16 09:17:46.128386 Receive (195 bytes): <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
+[NETCONF DEBUG] 2026/06/16 09:35:58.984263 SSH: creating new session
+[NETCONF DEBUG] 2026/06/16 09:35:58.985354 SSH: requesting subsystem "netconf"
+[NETCONF DEBUG] 2026/06/16 09:35:58.986061 SSH: subsystem "netconf" established
+[NETCONF DEBUG] 2026/06/16 09:35:58.986082 Session: receiving server Hello
+[NETCONF DEBUG] 2026/06/16 09:35:58.986085 Receive: waiting for delimiter "]]>]]>"
+[NETCONF DEBUG] 2026/06/16 09:35:59.032544 WaitForFunc: read 202 bytes (total buffered: 202)
+[NETCONF DEBUG] 2026/06/16 09:35:59.032566 WaitForFunc: delimiter found, returning 195 bytes
+[NETCONF DEBUG] 2026/06/16 09:35:59.032570 Receive (195 bytes): <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <capabilities>
     <capability>urn:ietf:params:netconf:base:1.0</capability>
   </capabilities>
   <session-id>12345</session-id>
 </hello>
-[NETCONF DEBUG] 2026/06/16 09:17:46.128464 Session: server Hello received, session-id=12345, capabilities=[urn:ietf:params:netconf:base:1.0]
-[NETCONF DEBUG] 2026/06/16 09:17:46.128468 Session: sending client Hello
-[NETCONF DEBUG] 2026/06/16 09:17:46.128475 Send (245 bytes): <?xml version="1.0" encoding="UTF-8"?>
+[NETCONF DEBUG] 2026/06/16 09:35:59.032731 Session: server Hello received, session-id=12345, capabilities=[urn:ietf:params:netconf:base:1.0]
+[NETCONF DEBUG] 2026/06/16 09:35:59.032742 Session: sending client Hello
+[NETCONF DEBUG] 2026/06/16 09:35:59.032766 Send (245 bytes): <?xml version="1.0" encoding="UTF-8"?>
 <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities><capability>urn:ietf:params:netconf:base:1.0</capability><capability>urn:ietf:params:netconf:base:1.1</capability></capabilities></hello>
-[NETCONF DEBUG] 2026/06/16 09:17:46.128488 Session: negotiated NETCONF version "v1.0"
+[NETCONF DEBUG] 2026/06/16 09:35:59.032811 Session: negotiated NETCONF version "v1.0"
 [INFO] Connected (session-id=12345)
-[NETCONF DEBUG] 2026/06/16 09:17:46.128554 Exec: sending RPC message-id=3aece3c4-db9e-4347-91c4-ae1984d02318
-[NETCONF DEBUG] 2026/06/16 09:17:46.128556 Send (115 bytes): <rpc message-id="3aece3c4-db9e-4347-91c4-ae1984d02318" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get/></rpc>
-[NETCONF DEBUG] 2026/06/16 09:17:46.128561 Exec: waiting for RPC reply message-id=3aece3c4-db9e-4347-91c4-ae1984d02318
-[NETCONF DEBUG] 2026/06/16 09:17:46.128562 Receive: waiting for delimiter "]]>]]>"
-[NETCONF DEBUG] 2026/06/16 09:17:51.129476 SSH: closing session
-[NETCONF DEBUG] 2026/06/16 09:17:51.129700 SSH: session closed
-[NETCONF DEBUG] 2026/06/16 09:17:51.129706 SSH: closing client connection
+[NETCONF DEBUG] 2026/06/16 09:35:59.032912 Exec: sending RPC message-id=ebcbd587-a128-4b07-b9ae-dcad912dda9b
+[NETCONF DEBUG] 2026/06/16 09:35:59.032917 Send (164 bytes): <rpc message-id="ebcbd587-a128-4b07-b9ae-dcad912dda9b" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get-vrrp-information><summary/></get-vrrp-information></rpc>
+[NETCONF DEBUG] 2026/06/16 09:35:59.032933 Exec: waiting for RPC reply message-id=ebcbd587-a128-4b07-b9ae-dcad912dda9b
+[NETCONF DEBUG] 2026/06/16 09:35:59.032936 Receive: waiting for delimiter "]]>]]>"
+[NETCONF DEBUG] 2026/06/16 09:36:04.033585 SSH: closing session
+[NETCONF DEBUG] 2026/06/16 09:36:04.033795 SSH: session closed
+[NETCONF DEBUG] 2026/06/16 09:36:04.033802 SSH: closing client connection
 [ERROR] Timeout after 5s waiting for RPC reply
-[2026-06-16 09:17:51] [ERROR] Iteration 1/1 FAILED (exit=1)
-[2026-06-16 09:17:51] [INFO ] ============================================
-[2026-06-16 09:17:51] [INFO ] Scenario finished. Success: 0 / Failed: 1 / Total: 1
-[2026-06-16 09:17:51] [INFO ] ============================================
+[2026-06-16 09:36:04] [ERROR] Iteration 1/1 FAILED (exit=1)
+[2026-06-16 09:36:04] [INFO ] ============================================
+[2026-06-16 09:36:04] [INFO ] Scenario finished. Success: 0 / Failed: 1 / Total: 1
+[2026-06-16 09:36:04] [INFO ] ============================================
 ---
 # exit code: 0
