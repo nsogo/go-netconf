@@ -190,8 +190,10 @@ func DialSSHTimeout(target string, config *ssh.ClientConfig, timeout time.Durati
 		for range ticker.C {
 			_, _, err := t.sshClient.Conn.SendRequest("KEEP_ALIVE", true, nil)
 			if err != nil {
+				debugf("SSH: Keep-Alive failed: %v", err)
 				return
 			}
+			debugf("SSH: Keep-Alive sent")
 		}
 	}()
 
