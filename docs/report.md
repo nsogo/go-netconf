@@ -3,7 +3,7 @@
 **実施日**: 2026-06-16  
 **対象 PR**: [PR #4](https://github.com/ttsubo2000/go-netconf/pull/4)  
 **対象 Issue**: [Issue #3](https://github.com/ttsubo2000/go-netconf/issues/3)  
-**検証者**: Claude Code
+**検証者**: ttsubo2000
 
 ---
 
