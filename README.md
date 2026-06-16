@@ -182,14 +182,14 @@ curl -X POST http://localhost:8088/reset
 [2026-06-16 10:00:03] [INFO ] Enabling delays (mock delay=15s, NETCONF timeout=10s)
 [2026-06-16 10:00:03] [INFO ] --- Iteration 1/3 ---
 [NETCONF DEBUG] SSH Dial: connecting to localhost:830
-[NETCONF DEBUG] SSH Dial: connected to localhost:830
 [NETCONF DEBUG] SSH: subsystem "netconf" established
 [NETCONF DEBUG] Session: server Hello received, session-id=12345
 [NETCONF DEBUG] Exec: sending RPC message-id=xxxx
 [NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"
-[NETCONF DEBUG] WaitForFunc read error: read tcp: i/o timeout
-[NETCONF DEBUG] Exec: Receive error: read tcp: i/o timeout
-[ERROR] RPC failed: read tcp: i/o timeout
+  ← ここで goroutine がブロック（mock は遅延応答中）
+  ← timeout 秒後に time.After() が発火 → s.Close()
+[NETCONF DEBUG] SSH: closing session
+[ERROR] Timeout after 10s waiting for RPC reply
 [2026-06-16 10:00:13] [ERROR] Iteration 1/3 FAILED (exit=1)
 ...
 [2026-06-16 10:02:13] [INFO ] Scenario finished. Success: 0 / Failed: 3 / Total: 3
@@ -197,7 +197,7 @@ curl -X POST http://localhost:8088/reset
 
 ### タイムアウト閾値の比較実験
 
-`--timeout` の値は `netconf.DialSSHTimeout()` に直接渡され、TCP レベルの `SetReadDeadline` として機能する。
+`--timeout` の値は RPC 応答待ちタイムアウトとして機能する（`time.After()` + goroutine パターンで実装）。
 異なる閾値での挙動の違いを確認できる：
 
 ```bash
@@ -206,6 +206,88 @@ curl -X POST http://localhost:8088/reset
 
 # 閾値 > mock遅延 → 毎回成功
 ./tools/run_netconf_scenario.sh --mode timeout --timeout 30 --delay 15 --count 3
+```
+
+---
+
+## Junos 実機への接続
+
+`netconf-client` は netconf-mock だけでなく、実際の Junos ルーターに対しても使用できる。
+ただし以下の点に注意すること。
+
+### Junos 側の事前設定
+
+NETCONF over SSH を有効にするには、Junos 側で以下の設定が必要：
+
+```
+# NETCONF SSH サービスを有効化
+set system services netconf ssh
+
+# NETCONF 接続を許可するユーザーの作成（例）
+set system login user netconf-user class super-user authentication plain-text-password
+```
+
+設定確認：
+
+```bash
+show system services
+# 出力に "netconf { ssh; }" が含まれていれば有効
+```
+
+### 接続コマンド例
+
+```bash
+# Junos ルーターへの接続（ポート 830）
+./netconf-client \
+  --host 192.168.1.1 \
+  --port 830 \
+  --user admin \
+  --password <パスワード> \
+  --timeout 30s \
+  --debug
+```
+
+> **ポートについて**: Junos の NETCONF デフォルトポートは `830`。
+> 環境によっては `22`（通常 SSH ポート）でも NETCONF subsystem として接続できる場合がある。
+
+### 既知の制限事項
+
+| 制限 | 内容 | 対処 |
+|------|------|------|
+| **SSH ホスト鍵検証なし** | `InsecureIgnoreHostKey()` を使用しており、中間者攻撃に対して無防備 | 本ツールは開発・検証用途に限定する |
+| **パスワード認証のみ** | `--password` フラグのみ対応。SSH 公開鍵認証は未対応 | ライブラリの `SSHConfigPubKeyFile` / `SSHConfigPubKeyAgent` を直接使用する場合は別途実装が必要 |
+| **RPC は `<get/>` 固定** | 全オペレーションデータを取得する `<get/>` のみ送信する | 実機では大量のデータが返ることがある。接続確認目的であれば `--timeout` を十分に大きく設定する |
+
+### タイムアウト値の目安
+
+実機では、設定データ量や機器の負荷によって応答時間が異なる。
+`netconf-mock` と同じ `--timeout 10s` では短すぎる場合がある。
+
+| 環境 | 推奨 `--timeout` |
+|------|-----------------|
+| netconf-mock（ローカル）| `10s` |
+| Junos（設定量少） | `30s` |
+| Junos（設定量多・高負荷） | `60s` 以上 |
+
+```bash
+# 実機接続の確認（余裕のあるタイムアウトで試す）
+./netconf-client \
+  --host 192.168.1.1 \
+  --port 830 \
+  --user admin \
+  --password <パスワード> \
+  --timeout 60s \
+  --debug
+```
+
+### NETCONF バージョンのネゴシエーション
+
+`netconf-client`（および go-netconf ライブラリ）は v1.0・v1.1 両方のケーパビリティを送信する。
+Junos が v1.1 を広告している場合、v1.1（チャンク形式フレーミング）でネゴシエーションされる。
+デバッグログで確認できる：
+
+```
+[NETCONF DEBUG] Session: negotiated NETCONF version "v1.1"
 ```
 
 ---
