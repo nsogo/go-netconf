@@ -1,7 +1,7 @@
 # 動作検証レポート
 
 **実施日**: 2026-06-16
-**対象コミット**: `c73109b` (docs: add Keep-Alive debug log and interval alignment notes)
+**対象コミット**: `9f94372` ベース（netconf-mock VRRP リプライ充実化後）
 **検証者**: ttsubo2000
 
 ---
@@ -13,6 +13,7 @@
 1. `time.After()` + goroutine パターンによるタイムアウト機構が正しく機能すること
 2. デフォルト RPC が `<get-vrrp-information><summary/></get-vrrp-information>` となり、collector_agent（vrrp_pool）と同一の RPC が送信されること
 3. SSH Keep-Alive 間隔が collector_agent と同じ 5 秒固定になっており、デバッグログで確認できること
+4. netconf-mock が `get-vrrp-information` に対して実際の VRRP XML データを返すこと（新規追加）
 
 ---
 
@@ -28,6 +29,7 @@
 | デフォルト RPC | `<get-vrrp-information><summary/></get-vrrp-information>` |
 | SSH 接続タイムアウト | 10s 固定（collector_agent 準拠） |
 | Keep-Alive 間隔 | 5s 固定（collector_agent 準拠） |
+| VRRP セッション | `ae0.0 MASTER` / `ae1.0 BACKUP`（デフォルトサンプル） |
 
 ---
 
@@ -36,7 +38,7 @@
 | # | テスト内容 | timeout | delay | 期待結果 | 実結果 | 経過時間 | 判定 |
 |---|-----------|---------|-------|---------|--------|----------|------|
 | 1 | タイムアウト確認 | 5s | 15s | exit=1, タイムアウトエラー | `[ERROR] Timeout after 5s waiting for RPC reply` / exit=1 | 5s | ✅ PASS |
-| 2 | 正常応答確認 | 10s | 3s | exit=0, RPC 成功 | `[INFO] RPC succeeded` / exit=0 | 3s | ✅ PASS |
+| 2 | 正常応答確認（VRRP XML） | 10s | 3s | exit=0, VRRP XML 応答 | `<vrrp-information>` を含む rpc-reply / exit=0 | 3s | ✅ PASS |
 | 3 | シナリオスクリプト | 5s | 15s | Failed: 1 / Total: 1 | `Scenario finished. Success: 0 / Failed: 1 / Total: 1` | 5s | ✅ PASS |
 
 **全 3 件 PASS**
@@ -51,6 +53,10 @@
 
 **実行コマンド**:
 ```bash
+curl -X POST http://localhost:8088/vrrp_sessions \
+  -H 'Content-Type: application/json' \
+  -d '[{"interface":"ae0.0","vrid":1,"state":"MASTER","rip":"192.168.0.1","vip":"192.168.0.254"},
+      {"interface":"ae1.0","vrid":2,"state":"BACKUP","rip":"192.168.1.1","vip":"192.168.1.254"}]'
 curl -X POST http://localhost:8088/set_use_delays
 curl -X POST http://localhost:8088/delays_range -H 'Content-Type: application/json' -d '{"delay": 15}'
 
@@ -61,6 +67,11 @@ NETCONF_DEBUG=1 ./netconf-client \
 **観測されたログ（抜粋）**:
 ```
 [INFO] Connecting to localhost:830 (timeout=5s)
+[NETCONF DEBUG] Session: receiving server Hello
+[NETCONF DEBUG] Receive (1210 bytes): <!-- No zombies were killed during the creation of this user interface -->
+  <capability>http://xml.juniper.net/netconf/junos/1.0</capability>
+  <capability>http://xml.juniper.net/dmi/system/1.0</capability>
+  ...
 [NETCONF DEBUG] Session: negotiated NETCONF version "v1.0"
 [INFO] Connected (session-id=12345)
 [NETCONF DEBUG] Send (164 bytes): <rpc ...><get-vrrp-information><summary/></get-vrrp-information></rpc>
@@ -73,6 +84,7 @@ NETCONF_DEBUG=1 ./netconf-client \
 ```
 
 **確認ポイント**:
+- HELLO に Junos ケーパビリティ（`http://xml.juniper.net/netconf/junos/1.0` 等）✅
 - `<get-vrrp-information><summary/></get-vrrp-information>` の RPC 送信 ✅
 - `SSH: Keep-Alive sent` が RPC 待機中に出力（5s 間隔）✅
 - 5 秒でタイムアウト ✅
@@ -83,12 +95,13 @@ NETCONF_DEBUG=1 ./netconf-client \
 
 ---
 
-### Test 2: 正常応答確認
+### Test 2: 正常応答確認（VRRP XML）
 
-**条件**: mock が 3 秒遅延、netconf-client のタイムアウトは 10 秒
+**条件**: mock が 3 秒遅延、netconf-client のタイムアウトは 10 秒、VRRP セッションデータ設定済み
 
 **実行コマンド**:
 ```bash
+curl -X POST http://localhost:8088/set_use_delays
 curl -X POST http://localhost:8088/delays_range -H 'Content-Type: application/json' -d '{"delay": 3}'
 
 NETCONF_DEBUG=1 ./netconf-client \
@@ -100,14 +113,36 @@ NETCONF_DEBUG=1 ./netconf-client \
 [INFO] Connected (session-id=12345)
 [NETCONF DEBUG] Send (164 bytes): <rpc ...><get-vrrp-information><summary/></get-vrrp-information></rpc>
 [NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"
-[NETCONF DEBUG] WaitForFunc: delimiter found, returning 139 bytes
+[NETCONF DEBUG] Receive (1057 bytes): <rpc-reply
+    xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"
+    xmlns:junos="http://xml.juniper.net/junos/14.2R3/junos"
+    xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0"
+    message-id="...">
+<vrrp-information style="brief">
+<vrrp-interface>
+  <interface>ae0.0</interface>
+  <interface-state>up</interface-state>
+  <group>1</group>
+  <vrrp-state>MASTER</vrrp-state>
+  <local-interface-address>192.168.0.1</local-interface-address>
+  <virtual-ip-address>192.168.0.254</virtual-ip-address>
+</vrrp-interface>
+<vrrp-interface>
+  <interface>ae1.0</interface>
+  <vrrp-state>BACKUP</vrrp-state>
+  ...
+</vrrp-interface>
+</vrrp-information>
+</rpc-reply>
 [NETCONF DEBUG] Exec: RPC completed successfully message-id=...
 [INFO] RPC succeeded
-[DATA] <rpc-reply ...><ok/></rpc-reply>
 ```
 
 **確認ポイント**:
 - 3 秒で正常応答（Keep-Alive 発火前に完了）✅
+- `<vrrp-information>` を含む VRRP XML が返却（以前の `<ok/>` から改善）✅
+- rpc-reply に Junos 名前空間（`xmlns:junos`）付与 ✅
+- ae0.0 MASTER / ae1.0 BACKUP の 2 セッション確認 ✅
 - exit=0 ✅
 
 **結果**: exit=0 → **PASS**
@@ -122,11 +157,16 @@ NETCONF_DEBUG=1 ./netconf-client \
 
 **実行コマンド**:
 ```bash
-tools/run_netconf_scenario.sh --mode timeout --timeout 5 --delay 15 --count 1
+tools/run_netconf_scenario.sh --mode timeout --timeout 5 --delay 15 --count 1 --no-build
 ```
 
 **観測されたログ（抜粋）**:
 ```
+[INFO ] Starting netconf-mock...
+[INFO ] netconf-mock is ready
+[INFO ] Setting default VRRP sessions (ae0.0 MASTER, ae1.0 BACKUP)...  ← 新機能
+[INFO ] Default VRRP sessions configured (2 sessions)
+[INFO ] Enabling delays (mock delay=15s, NETCONF timeout=5s)
 [INFO ] Starting netconf scenario (mode=timeout, count=1, interval=60s, timeout=5s,
         rpc=<get-vrrp-information><summary/></get-vrrp-information>)
 [NETCONF DEBUG] Send (164 bytes): <rpc ...><get-vrrp-information><summary/></get-vrrp-information></rpc>
@@ -137,6 +177,10 @@ tools/run_netconf_scenario.sh --mode timeout --timeout 5 --delay 15 --count 1
 [ERROR] Iteration 1/1 FAILED (exit=1)
 [INFO ] Scenario finished. Success: 0 / Failed: 1 / Total: 1
 ```
+
+**確認ポイント**:
+- スクリプト起動時に VRRP セッションが自動セット（新機能）✅
+- タイムアウト再現確認 ✅
 
 **結果**: タイムアウト再現確認 → **PASS**
 
@@ -156,12 +200,24 @@ tools/run_netconf_scenario.sh --mode timeout --timeout 5 --delay 15 --count 1
 
 ---
 
+## netconf-mock の VRRP リプライ
+
+| 機能 | 内容 |
+|------|------|
+| HELLO ケーパビリティ | Junos ケーパビリティ（`http://xml.juniper.net/netconf/junos/1.0` 等）を含む 12 件 |
+| `get-vrrp-information` 応答 | Jinja2 テンプレートで生成した `<vrrp-information>` XML |
+| rpc-reply 名前空間 | `xmlns:junos="http://xml.juniper.net/junos/14.2R3/junos"` 付与 |
+| VRRP セッション設定 | `POST /vrrp_sessions` で動的に設定可能 |
+| デフォルトセッション | スクリプト起動時に ae0.0 MASTER / ae1.0 BACKUP を自動セット |
+
+---
+
 ## ログファイル一覧
 
 | ファイル | テスト内容 |
 |---------|-----------|
 | [`logs/test1_timeout_5s_delay_15s.log`](../logs/test1_timeout_5s_delay_15s.log) | Test 1: タイムアウト確認（timeout=5s, delay=15s） |
-| [`logs/test2_normal_10s_delay_3s.log`](../logs/test2_normal_10s_delay_3s.log) | Test 2: 正常応答確認（timeout=10s, delay=3s） |
+| [`logs/test2_normal_10s_delay_3s.log`](../logs/test2_normal_10s_delay_3s.log) | Test 2: 正常応答確認（timeout=10s, delay=3s）VRRP XML 取得 |
 | [`logs/test3_scenario_timeout_5s_delay_15s.log`](../logs/test3_scenario_timeout_5s_delay_15s.log) | Test 3: シナリオスクリプト タイムアウト再現 |
 
 ---
@@ -171,4 +227,4 @@ tools/run_netconf_scenario.sh --mode timeout --timeout 5 --delay 15 --count 1
 - `time.After()` + goroutine パターンにより、`--timeout` で指定した秒数で確実に RPC 応答待ちタイムアウトが機能することを確認した
 - デフォルト RPC `<get-vrrp-information><summary/></get-vrrp-information>` により、collector_agent（vrrp_pool）と同一の NETCONF リクエストを再現できることを確認した
 - SSH Keep-Alive が 5 秒間隔（collector_agent と同一）で動作し、タイムアウト待機中に `SSH: Keep-Alive sent` ログが出力されることを確認した
-- netconf-mock は RPC 内容によらず `<ok/>` を返すため、タイムアウト再現テストはそのまま使用できる
+- netconf-mock が `get-vrrp-information` に対して実際の VRRP XML（`<vrrp-information style="brief">` 形式）を返すことを確認した。これにより collector_agent が受け取るレスポンスと同等のデータで動作確認が可能になった

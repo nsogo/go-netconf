@@ -1,15 +1,16 @@
-import json
 import logging
 import random
 import socket
 import threading
 from binascii import hexlify
+from collections import defaultdict
 
 import gevent
 from gevent.monkey import patch_all
 patch_all()  # noqa: E702
 from gevent import sleep
 import gevent.pool
+import jinja2
 import paramiko
 try:
     from paramiko.py3compat import u
@@ -28,27 +29,64 @@ BUFF_SIZE = 4096
 WAIT_EVENT_TIMEOUT = 30
 
 HELLO_REPLY = '''\
+<!-- No zombies were killed during the creation of this user interface -->
+<!-- user admin, class super-user -->
 <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <capabilities>
     <capability>urn:ietf:params:netconf:base:1.0</capability>
+    <capability>urn:ietf:params:netconf:capability:candidate:1.0</capability>
+    <capability>urn:ietf:params:netconf:capability:confirmed-commit:1.0</capability>
+    <capability>urn:ietf:params:netconf:capability:validate:1.0</capability>
+    <capability>urn:ietf:params:netconf:capability:url:1.0?scheme=http,ftp,file</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:base:1.0</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:capability:candidate:1.0</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:capability:confirmed-commit:1.0</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:capability:validate:1.0</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:capability:url:1.0?protocol=http,ftp,file</capability>
+    <capability>http://xml.juniper.net/netconf/junos/1.0</capability>
+    <capability>http://xml.juniper.net/dmi/system/1.0</capability>
   </capabilities>
   <session-id>{}</session-id>
 </hello>
 {}
 '''.format(SESSION_ID, DELIM)
 
-OK_REPLY_TEMPLATE = '''\
+OK_REPLY = '<ok/>'
+
+VRRP_REPLY_TEMPLATE = jinja2.Template('''
+<vrrp-information style="brief">
+{% for session in sessions %}
+<vrrp-interface>
+  <interface>{{ session.interface }}</interface>
+  <interface-state>up</interface-state>
+  <group>{{ session.vrid }}</group>
+  <vrrp-state>{{ session.state }}</vrrp-state>
+  <vrrp-mode>Active</vrrp-mode>
+  <timer-name>A</timer-name>
+  <timer-value>2.071</timer-value>
+  <local-interface-address>{{ session.rip }}</local-interface-address>
+  <virtual-ip-address>{{ session.vip }}</virtual-ip-address>
+</vrrp-interface>
+{% endfor %}
+</vrrp-information>
+''')
+
+
+def make_rpc_reply(uuid, xml):
+    return '''\
 <rpc-reply
     xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"
+    xmlns:junos="http://xml.juniper.net/junos/14.2R3/junos"
+    xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0"
     message-id="{}">
-  <ok/>
+{}
 </rpc-reply>
 {}
-'''
+'''.format(uuid, xml, DELIM)
 
 
-def make_rpc_reply(uuid):
-    return OK_REPLY_TEMPLATE.format(uuid, DELIM)
+def reply_dict_default_entry():
+    return {"default": OK_REPLY, "sequence": [], "close_session": False}
 
 
 class NetconfMockServer(paramiko.ServerInterface):
@@ -60,9 +98,17 @@ class NetconfMockServer(paramiko.ServerInterface):
 
     @classmethod
     def reset(cls):
+        cls.vrrp_sessions = []
         cls.use_delays = False
         cls.reply_delay_ranges = {'default': (0, 0)}
         cls.fail_mode = False
+        cls.reply_dict = defaultdict(reply_dict_default_entry)
+        cls.refresh_status_replys()
+
+    @classmethod
+    def refresh_status_replys(cls):
+        cls.reply_dict['get-vrrp-information'][
+            'default'] = VRRP_REPLY_TEMPLATE.render(sessions=cls.vrrp_sessions)
 
     def __init__(self, ident):
         self.ident = ident
@@ -115,8 +161,7 @@ class NetconfMockServer(paramiko.ServerInterface):
         if request_type == "close-session":
             logger.info('%s close-session received', self.ident)
             self.session_closed = True
-            reply = make_rpc_reply(uuid)
-            self.channel.sendall(reply)
+            self.channel.sendall(make_rpc_reply(uuid, OK_REPLY))
             return
 
         if self.use_delays:
@@ -126,7 +171,15 @@ class NetconfMockServer(paramiko.ServerInterface):
             logger.debug('%s delaying response %ds (range %d-%d)', self.ident, delay, min_d, max_d)
             sleep(delay)
 
-        reply = make_rpc_reply(uuid)
+        reply_dict_entry = self.reply_dict[request_type]
+        if reply_dict_entry["sequence"]:
+            xml = reply_dict_entry["sequence"].pop()
+        else:
+            xml = reply_dict_entry["default"]
+            if callable(xml):
+                xml = xml(xml_data)
+
+        reply = make_rpc_reply(uuid, xml)
         logger.debug('%s sending reply:\n%s', self.ident, reply)
         self.channel.sendall(reply)
 
@@ -138,6 +191,8 @@ class NetconfMockServer(paramiko.ServerInterface):
             self.process_request(xml_data)
 
 
+NetconfMockServer.reset()
+
 controller = Flask(__name__)
 
 
@@ -147,6 +202,7 @@ def help():
         '/set_use_delays': 'Enable response delays',
         '/set_no_delays': 'Disable response delays',
         '/delays_range': 'POST {"delay": N} or {"min": N, "max": M} to set delay range',
+        '/vrrp_sessions': 'POST [{"interface":"ae0.0","vrid":1,"state":"MASTER","rip":"10.0.0.1","vip":"10.0.0.254"},...] to set VRRP reply data',
         '/reset': 'Reset all state to defaults',
     })
 
@@ -185,6 +241,30 @@ def delays_range():
                 NetconfMockServer.reply_delay_ranges[rpc] = (int(spec['min']), int(spec['max']))
 
     logger.info('Delay ranges updated: %s', NetconfMockServer.reply_delay_ranges)
+    return "Ok"
+
+
+@controller.route('/vrrp_sessions', methods=['POST'])
+def set_vrrp_sessions():
+    """Set VRRP reply data.
+
+    POST a list of session objects:
+    [{"interface": "ae0.0", "vrid": 1, "state": "MASTER", "rip": "10.0.0.1", "vip": "10.0.0.254"}]
+
+    Fields:
+      interface: logical interface name (e.g. ae0.0)
+      vrid: VRRP group ID (integer)
+      state: "MASTER" or "BACKUP"
+      rip: router IP address (local-interface-address)
+      vip: virtual IP address
+    """
+    data = request.get_json()
+    logger.debug('/vrrp_sessions received: %s', data)
+    if not isinstance(data, list):
+        return "Invalid data format: expected a JSON array", 400
+    NetconfMockServer.vrrp_sessions = data
+    NetconfMockServer.refresh_status_replys()
+    logger.info('VRRP sessions updated: %d session(s)', len(data))
     return "Ok"
 
 

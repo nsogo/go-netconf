@@ -1,41 +1,43 @@
-# Test 1: タイムアウト確認 (--timeout 5s --delay 15s)
-# 実行日時: 2026-06-16 13:51:03
-# 期待結果: 5秒でタイムアウトエラー (exit=1)
-# コマンド: netconf-client --host localhost --port 830 --user admin --password admin --timeout 5s
-# RPC: <get-vrrp-information><summary/></get-vrrp-information> (デフォルト)
-# SSH接続タイムアウト: 10s固定 / Keep-Alive間隔: 5s固定 (collector_agent準拠)
----
-OkOk
 [INFO] Connecting to localhost:830 (timeout=5s)
-[NETCONF DEBUG] 2026/06/16 13:51:03.659876 SSH: creating new session
-[NETCONF DEBUG] 2026/06/16 13:51:03.660476 SSH: requesting subsystem "netconf"
-[NETCONF DEBUG] 2026/06/16 13:51:03.660932 SSH: subsystem "netconf" established
-[NETCONF DEBUG] 2026/06/16 13:51:03.660946 Session: receiving server Hello
-[NETCONF DEBUG] 2026/06/16 13:51:03.660947 Receive: waiting for delimiter "]]>]]>"
-[NETCONF DEBUG] 2026/06/16 13:51:03.707017 WaitForFunc: read 202 bytes (total buffered: 202)
-[NETCONF DEBUG] 2026/06/16 13:51:03.707026 WaitForFunc: delimiter found, returning 195 bytes
-[NETCONF DEBUG] 2026/06/16 13:51:03.707027 Receive (195 bytes): <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
+[NETCONF DEBUG] 2026/06/16 17:10:40.221736 SSH: creating new session
+[NETCONF DEBUG] 2026/06/16 17:10:40.222448 SSH: requesting subsystem "netconf"
+[NETCONF DEBUG] 2026/06/16 17:10:40.222891 SSH: subsystem "netconf" established
+[NETCONF DEBUG] 2026/06/16 17:10:40.222895 Session: receiving server Hello
+[NETCONF DEBUG] 2026/06/16 17:10:40.222896 Receive: waiting for delimiter "]]>]]>"
+[NETCONF DEBUG] 2026/06/16 17:10:40.268897 WaitForFunc: read 1217 bytes (total buffered: 1217)
+[NETCONF DEBUG] 2026/06/16 17:10:40.268903 WaitForFunc: delimiter found, returning 1210 bytes
+[NETCONF DEBUG] 2026/06/16 17:10:40.268906 Receive (1210 bytes): <!-- No zombies were killed during the creation of this user interface -->
+<!-- user admin, class super-user -->
+<hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
   <capabilities>
     <capability>urn:ietf:params:netconf:base:1.0</capability>
+    <capability>urn:ietf:params:netconf:capability:candidate:1.0</capability>
+    <capability>urn:ietf:params:netconf:capability:confirmed-commit:1.0</capability>
+    <capability>urn:ietf:params:netconf:capability:validate:1.0</capability>
+    <capability>urn:ietf:params:netconf:capability:url:1.0?scheme=http,ftp,file</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:base:1.0</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:capability:candidate:1.0</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:capability:confirmed-commit:1.0</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:capability:validate:1.0</capability>
+    <capability>urn:ietf:params:xml:ns:netconf:capability:url:1.0?protocol=http,ftp,file</capability>
+    <capability>http://xml.juniper.net/netconf/junos/1.0</capability>
+    <capability>http://xml.juniper.net/dmi/system/1.0</capability>
   </capabilities>
   <session-id>12345</session-id>
 </hello>
-[NETCONF DEBUG] 2026/06/16 13:51:03.707107 Session: server Hello received, session-id=12345, capabilities=[urn:ietf:params:netconf:base:1.0]
-[NETCONF DEBUG] 2026/06/16 13:51:03.707111 Session: sending client Hello
-[NETCONF DEBUG] 2026/06/16 13:51:03.707120 Send (245 bytes): <?xml version="1.0" encoding="UTF-8"?>
+[NETCONF DEBUG] 2026/06/16 17:10:40.269012 Session: server Hello received, session-id=12345, capabilities=[urn:ietf:params:netconf:base:1.0 urn:ietf:params:netconf:capability:candidate:1.0 urn:ietf:params:netconf:capability:confirmed-commit:1.0 urn:ietf:params:netconf:capability:validate:1.0 urn:ietf:params:netconf:capability:url:1.0?scheme=http,ftp,file urn:ietf:params:xml:ns:netconf:base:1.0 urn:ietf:params:xml:ns:netconf:capability:candidate:1.0 urn:ietf:params:xml:ns:netconf:capability:confirmed-commit:1.0 urn:ietf:params:xml:ns:netconf:capability:validate:1.0 urn:ietf:params:xml:ns:netconf:capability:url:1.0?protocol=http,ftp,file http://xml.juniper.net/netconf/junos/1.0 http://xml.juniper.net/dmi/system/1.0]
+[NETCONF DEBUG] 2026/06/16 17:10:40.269019 Session: sending client Hello
+[NETCONF DEBUG] 2026/06/16 17:10:40.269028 Send (245 bytes): <?xml version="1.0" encoding="UTF-8"?>
 <hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities><capability>urn:ietf:params:netconf:base:1.0</capability><capability>urn:ietf:params:netconf:base:1.1</capability></capabilities></hello>
-[NETCONF DEBUG] 2026/06/16 13:51:03.707136 Session: negotiated NETCONF version "v1.0"
+[NETCONF DEBUG] 2026/06/16 17:10:40.269043 Session: negotiated NETCONF version "v1.0"
 [INFO] Connected (session-id=12345)
-[NETCONF DEBUG] 2026/06/16 13:51:03.707212 Exec: sending RPC message-id=ff8a7421-ebf3-4269-8cc3-cbcbd60ef7a8
-[NETCONF DEBUG] 2026/06/16 13:51:03.707214 Send (164 bytes): <rpc message-id="ff8a7421-ebf3-4269-8cc3-cbcbd60ef7a8" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get-vrrp-information><summary/></get-vrrp-information></rpc>
-[NETCONF DEBUG] 2026/06/16 13:51:03.707222 Exec: waiting for RPC reply message-id=ff8a7421-ebf3-4269-8cc3-cbcbd60ef7a8
-[NETCONF DEBUG] 2026/06/16 13:51:03.707223 Receive: waiting for delimiter "]]>]]>"
-[NETCONF DEBUG] 2026/06/16 13:51:08.665033 SSH: Keep-Alive sent
-[NETCONF DEBUG] 2026/06/16 13:51:08.708346 SSH: closing session
-[NETCONF DEBUG] 2026/06/16 13:51:08.708453 SSH: session closed
-[NETCONF DEBUG] 2026/06/16 13:51:08.708462 SSH: closing client connection
+[NETCONF DEBUG] 2026/06/16 17:10:40.269096 Exec: sending RPC message-id=7ad7291e-d022-4585-9762-43aa66de28c7
+[NETCONF DEBUG] 2026/06/16 17:10:40.269099 Send (164 bytes): <rpc message-id="7ad7291e-d022-4585-9762-43aa66de28c7" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get-vrrp-information><summary/></get-vrrp-information></rpc>
+[NETCONF DEBUG] 2026/06/16 17:10:40.269108 Exec: waiting for RPC reply message-id=7ad7291e-d022-4585-9762-43aa66de28c7
+[NETCONF DEBUG] 2026/06/16 17:10:40.269110 Receive: waiting for delimiter "]]>]]>"
+[NETCONF DEBUG] 2026/06/16 17:10:45.226074 SSH: Keep-Alive sent
+[NETCONF DEBUG] 2026/06/16 17:10:45.270130 SSH: closing session
+[NETCONF DEBUG] 2026/06/16 17:10:45.270247 SSH: session closed
+[NETCONF DEBUG] 2026/06/16 17:10:45.270251 SSH: closing client connection
 [ERROR] Timeout after 5s waiting for RPC reply
-
----
-# exit code: 1
-# 経過時間: 5s
+[EXIT] 1

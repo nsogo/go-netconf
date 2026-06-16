@@ -20,8 +20,11 @@ set -euo pipefail
 #   --http-port mock HTTP control port (default: 8088)
 #   --user     SSH username (default: admin)
 #   --password SSH password (default: admin)
-#   --rpc      NETCONF RPC XML to execute (default: <get/>)
+#   --rpc      NETCONF RPC XML to execute (default: <get-vrrp-information><summary/></get-vrrp-information>)
 #              Example: --rpc '<get-vrrp-information><summary/></get-vrrp-information>'
+#   --vrrp-sessions  path to JSON file with VRRP session data to load into mock
+#              If omitted, a built-in 2-session sample is used.
+#              Format: [{"interface":"ae0.0","vrid":1,"state":"MASTER","rip":"192.168.0.1","vip":"192.168.0.254"},...]
 #   --no-build skip docker-compose build
 # ---------------------------------------------------------------------------
 
@@ -41,6 +44,7 @@ USER="admin"
 PASSWORD="admin"
 NO_BUILD=false
 RPC="<get-vrrp-information><summary/></get-vrrp-information>"
+VRRP_SESSIONS_FILE=""
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$1] ${*:2}"
@@ -63,8 +67,9 @@ while [[ $# -gt 0 ]]; do
         --http-port)  HTTP_PORT="$2";        shift 2 ;;
         --user)       USER="$2";             shift 2 ;;
         --password)   PASSWORD="$2";         shift 2 ;;
-        --rpc)        RPC="$2";              shift 2 ;;
-        --no-build)   NO_BUILD=true;         shift ;;
+        --rpc)             RPC="$2";              shift 2 ;;
+        --vrrp-sessions)   VRRP_SESSIONS_FILE="$2"; shift 2 ;;
+        --no-build)        NO_BUILD=true;         shift ;;
         -h|--help)    usage ;;
         *) log "ERROR" "Unknown option: $1"; exit 1 ;;
     esac
@@ -110,6 +115,24 @@ for i in $(seq 1 20); do
     fi
     sleep 1
 done
+
+# ---------------------------------------------------------------------------
+# Configure VRRP sessions
+# ---------------------------------------------------------------------------
+if [[ -n "${VRRP_SESSIONS_FILE}" ]]; then
+    log "INFO " "Setting VRRP sessions from ${VRRP_SESSIONS_FILE}..."
+    curl -sf -X POST "${MOCK_URL}/vrrp_sessions" \
+        -H "Content-Type: application/json" \
+        -d "@${VRRP_SESSIONS_FILE}" > /dev/null
+    log "INFO " "VRRP sessions configured from file"
+else
+    log "INFO " "Setting default VRRP sessions (ae0.0 MASTER, ae1.0 BACKUP)..."
+    curl -sf -X POST "${MOCK_URL}/vrrp_sessions" \
+        -H "Content-Type: application/json" \
+        -d '[{"interface":"ae0.0","vrid":1,"state":"MASTER","rip":"192.168.0.1","vip":"192.168.0.254"},{"interface":"ae1.0","vrid":2,"state":"BACKUP","rip":"192.168.1.1","vip":"192.168.1.254"}]' \
+        > /dev/null
+    log "INFO " "Default VRRP sessions configured (2 sessions)"
+fi
 
 # ---------------------------------------------------------------------------
 # Configure mock for timeout mode
