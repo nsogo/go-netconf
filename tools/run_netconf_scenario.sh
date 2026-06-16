@@ -20,6 +20,8 @@ set -euo pipefail
 #   --http-port mock HTTP control port (default: 8088)
 #   --user     SSH username (default: admin)
 #   --password SSH password (default: admin)
+#   --rpc      NETCONF RPC XML to execute (default: <get/>)
+#              Example: --rpc '<get-vrrp-information><summary/></get-vrrp-information>'
 #   --no-build skip docker-compose build
 # ---------------------------------------------------------------------------
 
@@ -38,6 +40,7 @@ HTTP_PORT=8088
 USER="admin"
 PASSWORD="admin"
 NO_BUILD=false
+RPC="<get-vrrp-information><summary/></get-vrrp-information>"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$1] ${*:2}"
@@ -60,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --http-port)  HTTP_PORT="$2";        shift 2 ;;
         --user)       USER="$2";             shift 2 ;;
         --password)   PASSWORD="$2";         shift 2 ;;
+        --rpc)        RPC="$2";              shift 2 ;;
         --no-build)   NO_BUILD=true;         shift ;;
         -h|--help)    usage ;;
         *) log "ERROR" "Unknown option: $1"; exit 1 ;;
@@ -135,7 +139,7 @@ else
     COUNT_LABEL="${COUNT}"
 fi
 
-log "INFO " "Starting netconf scenario (mode=${MODE}, count=${COUNT_LABEL}, interval=${INTERVAL}s, timeout=${TIMEOUT}s)"
+log "INFO " "Starting netconf scenario (mode=${MODE}, count=${COUNT_LABEL}, interval=${INTERVAL}s, timeout=${TIMEOUT}s, rpc=${RPC})"
 
 while true; do
     ITERATION=$((ITERATION + 1))
@@ -160,6 +164,7 @@ while true; do
         --user "${USER}" \
         --password "${PASSWORD}" \
         --timeout "${TIMEOUT_FLAG}" \
+        --rpc "${RPC}" \
         --debug
     EXIT_CODE=$?
     set -e

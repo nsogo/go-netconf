@@ -17,6 +17,7 @@ func main() {
 	password := flag.String("password", "", "SSH password")
 	timeout := flag.Duration("timeout", 10*time.Second, "NETCONF operation timeout")
 	debug := flag.Bool("debug", false, "enable debug logging")
+	rpc := flag.String("rpc", "<get-vrrp-information><summary/></get-vrrp-information>", "NETCONF RPC XML to execute")
 	flag.Parse()
 
 	if *user == "" {
@@ -51,7 +52,7 @@ func main() {
 	var reply *netconf.RPCReply
 	var rpcErr error
 	go func() {
-		reply, rpcErr = s.Exec(netconf.RawMethod("<get/>"))
+		reply, rpcErr = s.Exec(netconf.RawMethod(*rpc))
 		close(done)
 	}()
 
