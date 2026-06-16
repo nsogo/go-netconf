@@ -280,3 +280,42 @@ SendRequest                StdoutPipe → EOF             [ERROR] Timeout after 
 
 Keep-Alive が失敗してもアプリには直接通知されず、SSH コネクション断の副作用として
 `StdoutPipe` が EOF になるという間接的な経路で RPC goroutine が検出する。
+
+### Keep-Alive のデバッグログ
+
+`NETCONF_DEBUG=1` / `--debug` 有効時に以下のログが出力される：
+
+```
+# 正常時（timeout/2 ごとに出力）
+[NETCONF DEBUG] SSH: Keep-Alive sent
+
+# 異常時（TCP 断等）
+[NETCONF DEBUG] SSH: Keep-Alive failed: <エラー内容>
+```
+
+Keep-Alive 失敗ログが出た場合、SSH コネクション断が先に発生したことを意味する。
+この場合はタイムアウトではなく `[ERROR] RPC failed: EOF` が最終エラーになる。
+
+### netconf-client と collector_agent の Keep-Alive 間隔の統一
+
+`netconf-client` は `DialSSHTimeout` に `--timeout` の値をそのまま渡していたため、
+`--timeout` を変えると Keep-Alive 間隔も変わってしまい collector_agent と挙動が異なった。
+
+修正後（`cmd/netconf-client/main.go`）：
+
+```go
+// SSH 接続確立・Keep-Alive 間隔は collector_agent に合わせて 10s 固定
+// RPC 応答タイムアウトは time.After(*timeout) で制御
+const sshConnTimeout = 10 * time.Second
+s, err := netconf.DialSSHTimeout(target, config, sshConnTimeout)
+```
+
+これにより：
+
+| | collector_agent | netconf-client（修正後）|
+|--|--|--|
+| SSH 接続確立タイムアウト | 10s（ハードコード）| 10s（固定）|
+| Keep-Alive 間隔 | 5s（10s÷2）| 5s（10s÷2）|
+| RPC 応答タイムアウト | `time.After(conn.execTimeout)` | `time.After(*timeout)` |
+
+`--timeout` を変えても Keep-Alive 間隔は常に 5 秒固定となり、collector_agent と同一の挙動になる。
