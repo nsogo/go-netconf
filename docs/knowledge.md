@@ -4,130 +4,160 @@
 
 ## 全体像
 
-go-netconf のタイムアウトは「固定の N 秒間を待つ」仕組みではなく、
-**「Read を呼ぶたびに、そこから N 秒以内にデータが届かなければアウト」** という TCP レベルの期限設定で実現されている。
+go-netconf のタイムアウトは **2 層構造** になっている。
+
+| 層 | 担当範囲 | 実装 | 実効性 |
+|---|---|---|---|
+| SSH 接続確立 | TCP ダイヤル〜認証〜セッション確立 | `deadlineConn` + `net.DialTimeout` | ✅ 有効 |
+| RPC 応答待ち | `<get/>` 送信〜`<rpc-reply>` 受信 | `time.After()` + goroutine | ✅ 有効 |
 
 ---
 
-## ① タイムアウトの「仕掛け」は `DialSSHTimeout` で設置される
+## ① SSH 接続確立フェーズのタイムアウト（`deadlineConn`）
 
 ```go
 // netconf/transport_ssh.go
 func DialSSHTimeout(target string, config *ssh.ClientConfig, timeout time.Duration) (*Session, error) {
-    bareConn, err := net.DialTimeout("tcp", target, timeout)  // TCP 接続確立
-    conn := &deadlineConn{Conn: bareConn, timeout: timeout}   // タイムアウトラッパーで包む
+    bareConn, err := net.DialTimeout("tcp", target, timeout)   // TCP 接続確立タイムアウト
+    conn := &deadlineConn{Conn: bareConn, timeout: timeout}    // Read/Write deadline ラッパー
     ...
-}
-```
-
-`deadlineConn` は通常の TCP 接続にタイムアウト機能を後付けするラッパー。
-
-```go
-// netconf/transport_ssh.go
-type deadlineConn struct {
-    net.Conn
-    timeout time.Duration  // ← DialSSHTimeout に渡した値（例: 10s）が保存される
 }
 
 func (c *deadlineConn) Read(b []byte) (n int, err error) {
-    c.SetReadDeadline(time.Now().Add(c.timeout))  // ← Read のたびに「今から N 秒」と期限をセット
+    c.SetReadDeadline(time.Now().Add(c.timeout))  // Read のたびに「今から N 秒」と期限をセット
     return c.Conn.Read(b)
 }
 ```
 
+`deadlineConn` は TCP レイヤーに `SetReadDeadline` を設定する。
+SSH ハンドシェイク・認証フェーズは TCP を直接読むため、ここでタイムアウトが効く。
+
 ---
 
-## ② 通常フローでは `WaitForFunc` が Read をループする
+## ② なぜ `deadlineConn` は RPC 応答待ちに効かないか
+
+NETCONF セッション確立後、RPC 応答の読み取りは `sshSession.StdoutPipe()` 経由になる。
+
+```
+WaitForFunc()
+  └── t.Read()  ← TransportBasicIO.Read
+        └── sshSession.StdoutPipe() ← io.PipeReader（内部バッファ）から読む
+                                         ↑
+                                         TCP の SetReadDeadline は伝播しない
+```
+
+`io.PipeReader` は SSH クライアントライブラリの内部バッファであり、
+TCP コネクションの deadline 設定が届かない。
+
+**実測結果（旧実装）：`--timeout 5s --delay 15s` で実行しても 15 秒後に成功応答が返った。**
+
+---
+
+## ③ RPC 応答待ちタイムアウトの正しい実装（`time.After()` パターン）
 
 ```go
-// netconf/transport.go
-func (t *TransportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, error) {
-    buf := make([]byte, 8192)
-    pos := 0
-    for {
-        // ↓ ここで deadlineConn.Read() を呼ぶ → 毎回 deadline がリセットされる
-        n, err := t.Read(buf[pos : pos+(len(buf)/2)])
-        if err != nil {
-            if err != io.EOF {
-                return nil, err  // ← i/o timeout はここで返る
-            }
-            ...
-        }
-        ...
-    }
+// cmd/netconf-client/main.go
+timeoutCh := time.After(*timeout)
+done := make(chan struct{})
+var reply *netconf.RPCReply
+var rpcErr error
+go func() {
+    reply, rpcErr = s.Exec(netconf.RawMethod("<get/>"))  // ← SSH StdoutPipe をブロック読み
+    close(done)
+}()
+
+select {
+case <-timeoutCh:
+    s.Close()
+    fmt.Fprintf(os.Stderr, "[ERROR] Timeout after %s waiting for RPC reply\n", *timeout)
+    os.Exit(1)
+case <-done:
+    // 正常終了 or rpcErr チェック
 }
 ```
 
-mock が素早くデータを返し続ける場合、Read のたびに `deadline = 今 + N秒` がリセットされるため、
-大きなレスポンスでも問題なく受け取れる。
+`s.Exec()` をゴルーチンに閉じ込め、`time.After()` で外側から確実にタイムアウトを検出する。
+SSH の内部バッファ構造に依存しないため、どの環境でも正確に機能する。
+
+これは `collector_agent`（`netconf_connection.go`）が採用しているパターンと同じ。
 
 ---
 
-## ③ mock が遅延した場合のタイムアウト発動フロー
+## ④ タイムアウト発動フロー（新実装）
 
 ```
 時刻  0s : netconf-client が <get/> RPC を送信
-時刻  0s : mock が受信 → 15秒スリープ開始
-時刻  0s : WaitForFunc ループ開始
-           t.Read() を呼ぶ → deadline = 今 + 10s に設定
-           TCP がブロック（mock はまだ何も返さない）
-           ↓
-時刻 10s : deadline 超過！
-           t.Read() が err = "read tcp: i/o timeout" を返す
-           err != io.EOF なので return nil, err  ← ★ タイムアウト確定
-           ↓
-           Receive() が err を受け取り return nil, err
-           ↓
-           Exec() が err を受け取り return nil, err
-           ↓
-           netconf-client: [ERROR] RPC failed: read tcp: i/o timeout → exit 1
+           goroutine: s.Exec() → WaitForFunc() → StdoutPipe() でブロック
+           main:      time.After(5s) がカウント開始
+
+時刻  5s : time.After() チャネルが発火
+           main: s.Close() を呼ぶ → SSH セッションが閉じる
+                 → StdoutPipe が EOF を返す
+                 → goroutine: WaitForFunc EOF → s.Exec() が返る（close(done)）
+           main: [ERROR] Timeout after 5s waiting for RPC reply → exit 1
 ```
 
 ---
 
-## ④ デバッグログでの観測ポイント
+## ⑤ デバッグログでの観測ポイント
 
 `NETCONF_DEBUG=1` を有効にした際のログ出力：
 
+### 正常系（delay < timeout）
+
 ```
-[NETCONF DEBUG] Exec: sending RPC message-id=xxxx          ← 送信完了
-[NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"    ← 待機開始
-                                                             ↑ N 秒間 Read がブロック
-[NETCONF DEBUG] WaitForFunc read error: read tcp: i/o timeout  ← ★ タイムアウト検出
-[NETCONF DEBUG] Receive error: read tcp: i/o timeout
-[NETCONF DEBUG] Exec: Receive error: read tcp: i/o timeout
+[NETCONF DEBUG] SSH Dial: connecting to localhost:830
+[NETCONF DEBUG] SSH: creating new session
+[NETCONF DEBUG] Session: receiving server Hello
+[NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"
+[NETCONF DEBUG] WaitForFunc: delimiter found, returning N bytes
+[NETCONF DEBUG] Session: negotiated NETCONF version "v1.0"
+[NETCONF DEBUG] Exec: sending RPC message-id=xxxx
+[NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"
+[NETCONF DEBUG] WaitForFunc: delimiter found, returning N bytes
+[INFO] RPC succeeded
 ```
 
-`"Receive: waiting for delimiter"` と `"WaitForFunc read error"` の時刻差が、
+### タイムアウト系（delay > timeout）
+
+```
+[NETCONF DEBUG] Exec: sending RPC message-id=xxxx
+[NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"
+  ← ここで goroutine がブロック中（mock は遅延応答中）
+  ← timeout 秒後に time.After() が発火 → s.Close()
+[NETCONF DEBUG] WaitForFunc EOF: returning 0 bytes   ← goroutine が EOF を検出
+[ERROR] Timeout after 5s waiting for RPC reply       ← main goroutine が出力
+```
+
+`"Receive: waiting for delimiter"` から `"Timeout after Xs"` までの時間が
 実際のタイムアウト待機時間（= `--timeout` で指定した値）になる。
 
 ---
 
-## ⑤ `--timeout` 値と mock 遅延の関係
+## ⑥ `--timeout` 値と mock 遅延の関係
 
 | `--timeout` | `--delay`（mock 遅延） | 結果 |
 |---|---|---|
-| `5s` | `15s` | タイムアウト（5s < 15s） |
-| `10s` | `15s` | タイムアウト（10s < 15s） |
-| `30s` | `15s` | 成功（30s > 15s） |
+| `5s` | `15s` | タイムアウト（5s < 15s）|
+| `10s` | `15s` | タイムアウト（10s < 15s）|
+| `30s` | `15s` | 成功（30s > 15s）|
 
-`--timeout` の値が `--delay` を超えた瞬間に「成功」に転じる。
 `run_netconf_scenario.sh` でこの閾値をループ実行しながら観測できる。
 
 ---
 
-## ⑥ タイムアウト判定が行われるコードの場所
+## ⑦ タイムアウト判定が行われるコードの場所
 
-| ファイル | 行 | 内容 |
+| ファイル | 場所 | 内容 |
 |---|---|---|
-| `netconf/transport_ssh.go` | `deadlineConn.Read()` | TCP Read ごとに deadline をセット |
-| `netconf/transport.go` | `WaitForFunc()` の `t.Read()` 直後 | `i/o timeout` エラーを最初に受け取る場所 |
-| `netconf/transport.go` | `Receive()` | `WaitForFunc` のエラーを上位に伝播 |
-| `netconf/session.go` | `Exec()` の `Transport.Receive()` 直後 | RPC レベルでエラーを返す |
+| `cmd/netconf-client/main.go` | `time.After(*timeout)` + `select` | RPC 応答待ちタイムアウト（主要） |
+| `netconf/transport_ssh.go` | `deadlineConn.Read()` | SSH 接続確立フェーズのみ有効 |
+| `netconf/transport_ssh.go` | `net.DialTimeout()` | TCP 接続確立タイムアウト |
+| `netconf/transport.go` | `WaitForFunc()` の `t.Read()` 直後 | EOF / エラーの検出（goroutine 内） |
 
 ---
 
-## ⑦ タイムアウト値の変更方法
+## ⑧ タイムアウト値の変更方法
 
 ### netconf-client コマンドから変更する場合
 
@@ -141,4 +171,16 @@ mock が素早くデータを返し続ける場合、Read のたびに `deadline
 ./tools/run_netconf_scenario.sh --mode timeout --timeout 30 --delay 15 --count 3
 ```
 
-`--timeout` の値は `netconf.DialSSHTimeout()` に直接渡され、`deadlineConn` の Read deadline として機能する。
+`--timeout` の値は以下の両方に適用される：
+- SSH 接続確立フェーズ（`DialSSHTimeout` 経由）
+- RPC 応答待ちフェーズ（`time.After()` 経由）
+
+---
+
+## ⑨ collector_agent の config.yml との関係
+
+`collector_agent` の `netconf_connection.go` も同じ `time.After(conn.execTimeout)` パターンを採用している。
+`config.yml` の `timeout_seconds` は `conn.execTimeout` として `time.After()` に渡されるため、設定変更は正しく有効になる。
+
+`DialSSHTimeout` に渡されるタイムアウトがハードコード（10 秒）であっても、
+それは SSH 接続確立フェーズにのみ影響し、RPC 応答待ちタイムアウトは `time.After()` が管理するため問題ない。
