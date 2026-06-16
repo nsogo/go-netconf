@@ -43,15 +43,32 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[ERROR] Connection failed: %v\n", err)
 		os.Exit(1)
 	}
-	defer s.Close()
 
 	fmt.Printf("[INFO] Connected (session-id=%d)\n", s.SessionID)
 
-	reply, err := s.Exec(netconf.RawMethod("<get/>"))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[ERROR] RPC failed: %v\n", err)
+	timeoutCh := time.After(*timeout)
+	done := make(chan struct{})
+	var reply *netconf.RPCReply
+	var rpcErr error
+	go func() {
+		reply, rpcErr = s.Exec(netconf.RawMethod("<get/>"))
+		close(done)
+	}()
+
+	select {
+	case <-timeoutCh:
+		s.Close()
+		fmt.Fprintf(os.Stderr, "[ERROR] Timeout after %s waiting for RPC reply\n", *timeout)
+		os.Exit(1)
+	case <-done:
+	}
+
+	if rpcErr != nil {
+		s.Close()
+		fmt.Fprintf(os.Stderr, "[ERROR] RPC failed: %v\n", rpcErr)
 		os.Exit(1)
 	}
+	defer s.Close()
 
 	fmt.Printf("[INFO] RPC succeeded\n")
 	fmt.Printf("[DATA] %s\n", reply.RawReply)
