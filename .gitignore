@@ -1,0 +1,7 @@
+.idea/
+
+# ビルド成果物（ルート直下のバイナリのみ除外）
+/netconf-client
+
+# netconf-mock SSH ホスト鍵（Dockerfile でビルド時に生成する）
+docker/netconf-mock/netconf_rsa.key

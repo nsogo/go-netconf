@@ -1,49 +1,318 @@
-# netconf
+# go-netconf
 
+[RFC 6241](https://tools.ietf.org/html/rfc6241) / [RFC 6242](https://tools.ietf.org/html/rfc6242) に基づく Go 言語用 NETCONF クライアントライブラリ。
 
-[![GoDoc](https://godoc.org/github.com/Juniper/go-netconf/netconf?status.svg)](https://godoc.org/github.com/Juniper/go-netconf/netconf)
-[![Report Card](https://goreportcard.com/badge/github.com/Juniper/go-netconf/netconf)](https://goreportcard.com/report/github.com/Juniper/go-netconf/netconf)
-[![Build Status](https://travis-ci.org/Juniper/go-netconf.png)](https://travis-ci.org/Juniper/go-netconf)
+本リポジトリはオリジナルライブラリを以下の機能で拡張している：
 
+- **デバッグログ** — トランスポート層の Send/Receive/Timeout 挙動をトレース
+- **netconf-mock** — 応答遅延を制御できる Docker ベースの NETCONF モックサーバー
+- **netconf-client** — NETCONF RPC を1回実行する単独コマンド
+- **タイムアウト再現ツール** — タイムアウト発生をループで再現・観測するスクリプト
 
-This library is a simple NETCONF client based on [RFC6241](http://tools.ietf.org/html/rfc6241) and [RFC6242](http://tools.ietf.org/html/rfc6242) (although not fully compliant yet).
+---
 
-> **Note:** this is currently pre-alpha release.  API and features may and probably will change.  Suggestions and pull requests are welcome.
+## ライブラリの使い方
 
-## Features
-* Support for SSH transport using go.crypto/ssh. (Other transports are planned).
-* Built in RPC support (in progress).
-* Support for custom RPCs.
-* Independent of XML library.  Free to choose encoding/xml or another third party library to parse the results.
+```go
+import "github.com/Juniper/go-netconf/netconf"
 
-## Install
-* Requires Go 1.4 or later!
-* `go get github.com/Juniper/go-netconf/netconf`
+s, err := netconf.DialSSH("192.168.1.1", netconf.SSHConfigPassword("admin", "admin"))
+if err != nil {
+    log.Fatal(err)
+}
+defer s.Close()
 
-## Example
-* See examples in `examples/` directory.
+reply, err := s.Exec(netconf.RawMethod("<get/>"))
+```
 
-## Documentation
-You can view full API documentation at GoDoc: http://godoc.org/github.com/Juniper/go-netconf/netconf
+### デバッグログの有効化
 
-## License
-(BSD 2)
+接続前に `SetDebugLogger` を呼ぶことでデバッグログを有効にできる：
 
-Copyright © 2013, Juniper Networks
+```go
+import "os"
 
-All rights reserved.
+netconf.SetDebugLogger(os.Stderr)
 
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+s, err := netconf.DialSSHTimeout("192.168.1.1:830", config, 10*time.Second)
+```
 
-(1) Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+または `netconf-client` コマンドの `NETCONF_DEBUG=1` 環境変数でも有効にできる（後述）。
 
-(2) Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+ログ出力の対象イベント：
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+| イベント | ログ内容 |
+|---|---|
+| SSH 接続 | `SSH Dial: connecting to host:port` |
+| SSH セッション確立 | `SSH: creating new session` / `subsystem "netconf" established` |
+| Hello 交換 | `Session: receiving server Hello` / `session-id=N` |
+| RPC 送信 | `Send (N bytes): <rpc ...>` |
+| RPC 受信 | `Receive: waiting for delimiter` / `Receive (N bytes): ...` |
+| 読み取りループ | `WaitForFunc: read N bytes (total buffered: N)` |
+| タイムアウト | `WaitForFunc read error: read tcp: i/o timeout` |
+| セッションクローズ | `SSH: closing session` |
 
-The views and conclusions contained in the software and documentation are those of the authors and should not be interpreted as representing official policies, either expressed or implied, of Juniper Networks.
+---
 
-Authors and Contributors
-------------------------
-* [Brandon Bennett](https://github.com/nemith), Facebook
-* [Charl Matthee](https://github.com/charl)
+## netconf-client コマンド
+
+NETCONF `<get/>` RPC を1回実行して終了する単独コマンド。
+
+### ビルド
+
+```bash
+go build -o netconf-client ./cmd/netconf-client/
+```
+
+### 使い方
+
+```bash
+./netconf-client \
+  --host localhost \
+  --port 830 \
+  --user admin \
+  --password admin \
+  --timeout 10s \
+  --debug
+```
+
+| オプション | 説明 | デフォルト |
+|---|---|---|
+| `--host` | 接続先ホスト | `localhost` |
+| `--port` | 接続先ポート | `830` |
+| `--user` | SSH ユーザー名 | *（必須）* |
+| `--password` | SSH パスワード | `""` |
+| `--timeout` | `DialSSHTimeout` に渡すタイムアウト値 | `10s` |
+| `--debug` | デバッグログを stderr に出力 | `false` |
+
+終了コード：
+- `0` — RPC 成功
+- `1` — 接続失敗またはタイムアウト
+
+`NETCONF_DEBUG=1` 環境変数は `--debug` フラグと同等。
+
+---
+
+## netconf-mock（Docker）
+
+SSH 接続を受け付け、任意の RPC に `<ok/>` を返す Python ベースの NETCONF モックサーバー。
+HTTP API で応答遅延を制御できるため、タイムアウトシナリオの再現に使用する。
+
+### 起動
+
+```bash
+docker compose up -d netconf-mock
+```
+
+デフォルト認証情報：`admin` / `admin`、ポート：`830`
+
+### HTTP 制御 API（ポート 8088）
+
+| エンドポイント | メソッド | 説明 |
+|---|---|---|
+| `/` | GET | 利用可能なエンドポイント一覧 |
+| `/set_use_delays` | POST | 応答遅延を有効化 |
+| `/set_no_delays` | POST | 応答遅延を無効化 |
+| `/delays_range` | POST | 遅延秒数を設定 |
+| `/reset` | POST | 全状態を初期値にリセット |
+
+```bash
+# 応答遅延を15秒に設定
+curl -X POST http://localhost:8088/set_use_delays
+curl -X POST http://localhost:8088/delays_range \
+  -H "Content-Type: application/json" \
+  -d '{"delay": 15}'
+
+# リセット
+curl -X POST http://localhost:8088/reset
+```
+
+---
+
+## タイムアウト再現ツール
+
+`tools/run_netconf_scenario.sh` は、netconf-mock の起動・遅延設定・`netconf-client` のループ実行を一括で行うツールスクリプト。
+
+### 使い方
+
+```bash
+./tools/run_netconf_scenario.sh [オプション]
+```
+
+| オプション | 説明 | デフォルト |
+|---|---|---|
+| `--mode` | `normal`（通常）/ `timeout`（タイムアウト再現） | `normal` |
+| `--timeout` | `DialSSHTimeout` に渡すタイムアウト秒数 | `10` |
+| `--interval` | ループ間隔（秒） | `60` |
+| `--count` | ループ回数（`0` = 無限） | `3` |
+| `--delay` | mock 応答遅延秒数（timeout モード時） | `15` |
+| `--host` | 接続先ホスト | `localhost` |
+| `--port` | NETCONF ポート | `830` |
+| `--http-port` | mock HTTP 制御ポート | `8088` |
+| `--user` | SSH ユーザー名 | `admin` |
+| `--password` | SSH パスワード | `admin` |
+| `--no-build` | `docker compose build` をスキップ | — |
+
+### normal モード — 正常動作をループで確認
+
+```bash
+# デフォルト設定（タイムアウト10秒、60秒間隔、3回）
+./tools/run_netconf_scenario.sh --mode normal
+
+# タイムアウトを30秒に変えて挙動を比較
+./tools/run_netconf_scenario.sh --mode normal --timeout 30 --count 3
+```
+
+### timeout モード — タイムアウト発生をループで再現
+
+```bash
+# timeout=10秒、mock遅延=15秒 → 毎回タイムアウト発生
+./tools/run_netconf_scenario.sh --mode timeout --timeout 10 --delay 15 --count 3
+
+# timeout=30秒、mock遅延=15秒 → 遅延がタイムアウト以内なので成功
+./tools/run_netconf_scenario.sh --mode timeout --timeout 30 --delay 15 --count 3
+```
+
+### 出力例（timeout モード）
+
+```
+[2026-06-16 10:00:00] [INFO ] Starting netconf scenario (mode=timeout, count=3, interval=60s, timeout=10s)
+[2026-06-16 10:00:00] [INFO ] Starting netconf-mock...
+[2026-06-16 10:00:03] [INFO ] netconf-mock is ready
+[2026-06-16 10:00:03] [INFO ] Enabling delays (mock delay=15s, NETCONF timeout=10s)
+[2026-06-16 10:00:03] [INFO ] --- Iteration 1/3 ---
+[NETCONF DEBUG] SSH Dial: connecting to localhost:830
+[NETCONF DEBUG] SSH: subsystem "netconf" established
+[NETCONF DEBUG] Session: server Hello received, session-id=12345
+[NETCONF DEBUG] Exec: sending RPC message-id=xxxx
+[NETCONF DEBUG] Receive: waiting for delimiter "]]>]]>"
+  ← ここで goroutine がブロック（mock は遅延応答中）
+  ← timeout 秒後に time.After() が発火 → s.Close()
+[NETCONF DEBUG] SSH: closing session
+[ERROR] Timeout after 10s waiting for RPC reply
+[2026-06-16 10:00:13] [ERROR] Iteration 1/3 FAILED (exit=1)
+...
+[2026-06-16 10:02:13] [INFO ] Scenario finished. Success: 0 / Failed: 3 / Total: 3
+```
+
+### タイムアウト閾値の比較実験
+
+`--timeout` の値は RPC 応答待ちタイムアウトとして機能する（`time.After()` + goroutine パターンで実装）。
+異なる閾値での挙動の違いを確認できる：
+
+```bash
+# 閾値 < mock遅延 → 毎回タイムアウト
+./tools/run_netconf_scenario.sh --mode timeout --timeout 5  --delay 15 --count 3
+
+# 閾値 > mock遅延 → 毎回成功
+./tools/run_netconf_scenario.sh --mode timeout --timeout 30 --delay 15 --count 3
+```
+
+---
+
+## Junos 実機への接続
+
+`netconf-client` は netconf-mock だけでなく、実際の Junos ルーターに対しても使用できる。
+ただし以下の点に注意すること。
+
+### Junos 側の事前設定
+
+NETCONF over SSH を有効にするには、Junos 側で以下の設定が必要：
+
+```
+# NETCONF SSH サービスを有効化
+set system services netconf ssh
+
+# NETCONF 接続を許可するユーザーの作成（例）
+set system login user netconf-user class super-user authentication plain-text-password
+```
+
+設定確認：
+
+```bash
+show system services
+# 出力に "netconf { ssh; }" が含まれていれば有効
+```
+
+### 接続コマンド例
+
+```bash
+# Junos ルーターへの接続（ポート 830）
+./netconf-client \
+  --host 192.168.1.1 \
+  --port 830 \
+  --user admin \
+  --password <パスワード> \
+  --timeout 30s \
+  --debug
+```
+
+> **ポートについて**: Junos の NETCONF デフォルトポートは `830`。
+> 環境によっては `22`（通常 SSH ポート）でも NETCONF subsystem として接続できる場合がある。
+
+### 既知の制限事項
+
+| 制限 | 内容 | 対処 |
+|------|------|------|
+| **SSH ホスト鍵検証なし** | `InsecureIgnoreHostKey()` を使用しており、中間者攻撃に対して無防備 | 本ツールは開発・検証用途に限定する |
+| **パスワード認証のみ** | `--password` フラグのみ対応。SSH 公開鍵認証は未対応 | ライブラリの `SSHConfigPubKeyFile` / `SSHConfigPubKeyAgent` を直接使用する場合は別途実装が必要 |
+| **RPC は `<get/>` 固定** | 全オペレーションデータを取得する `<get/>` のみ送信する | 実機では大量のデータが返ることがある。接続確認目的であれば `--timeout` を十分に大きく設定する |
+
+### タイムアウト値の目安
+
+実機では、設定データ量や機器の負荷によって応答時間が異なる。
+`netconf-mock` と同じ `--timeout 10s` では短すぎる場合がある。
+
+| 環境 | 推奨 `--timeout` |
+|------|-----------------|
+| netconf-mock（ローカル）| `10s` |
+| Junos（設定量少） | `30s` |
+| Junos（設定量多・高負荷） | `60s` 以上 |
+
+```bash
+# 実機接続の確認（余裕のあるタイムアウトで試す）
+./netconf-client \
+  --host 192.168.1.1 \
+  --port 830 \
+  --user admin \
+  --password <パスワード> \
+  --timeout 60s \
+  --debug
+```
+
+### NETCONF バージョンのネゴシエーション
+
+`netconf-client`（および go-netconf ライブラリ）は v1.0・v1.1 両方のケーパビリティを送信する。
+Junos が v1.1 を広告している場合、v1.1（チャンク形式フレーミング）でネゴシエーションされる。
+デバッグログで確認できる：
+
+```
+[NETCONF DEBUG] Session: negotiated NETCONF version "v1.1"
+```
+
+---
+
+## リポジトリ構成
+
+```
+.
+├── netconf/
+│   ├── debug.go           # SetDebugLogger / debugf
+│   ├── session.go         # NETCONF セッション（Hello 交換・Exec）
+│   ├── transport.go       # 基本 I/O（Send・Receive・WaitForFunc）
+│   └── transport_ssh.go   # SSH トランスポート（Dial・deadlineConn）
+├── cmd/
+│   └── netconf-client/
+│       └── main.go        # 単独実行コマンド
+├── docker/
+│   └── netconf-mock/
+│       ├── netconf_server.py   # Python NETCONF モックサーバー
+│       ├── Dockerfile
+│       └── requirements.txt
+├── tools/
+│   └── run_netconf_scenario.sh  # タイムアウト再現ツールスクリプト
+├── docker-compose.yml
+└── examples/
+    ├── ssh1/
+    └── ssh2/
+```
