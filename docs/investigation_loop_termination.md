@@ -16,16 +16,18 @@ go-netconf の `WaitForFunc` において「TCPセグメント分割によって
 
 | 項目 | 内容 |
 |------|------|
-| 実験クライアント | go-netconf v0.1.1 ソースからビルドしたテストクライアント |
+| NETCONF ライブラリ | `github.com/Juniper/go-netconf` v0.1.1 |
+| NETCONF クライアント | `cmd/netconf-client`（v0.1.1 ライブラリ使用、`time.After` タイムアウト付き） |
 | NETCONF モック | `docker/netconf-mock`（paramiko/gevent ベース） |
 | 接続先 | `localhost:830` |
 | 認証 | `admin` / `admin` |
 | RPC | `<get-vrrp-information><summary/></get-vrrp-information>` |
+| シナリオ実行 | `tools/run_netconf_scenario.sh` |
 
 ### v0.1.1 WaitForFunc（実験対象コード）
 
 ```go
-// netconf/transport.go @ v0.1.1
+// netconf/transport.go @ v0.1.1（行 90–125）
 func (t *transportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, error) {
     var out bytes.Buffer
     buf := make([]byte, 4096)   // バッファサイズ 4096 bytes
@@ -65,32 +67,36 @@ func (t *transportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, err
 
 ### 実験 1: split-delimiter モード
 
-**モック設定**: `]]>]]>` を `]]>` + 500ms sleep + `]]>` の 2 回送信に分割
+**モック設定**: `]]>]]>` を `]]>` + 500ms sleep + `]]>` の 2 回送信に分割  
+**実行**: `tools/run_netconf_scenario.sh --mode split-delimiter --timeout 10 --count 1`
 
 ```
-$ ./test_client localhost:830
-Connecting to localhost:830 ...
-Connected. Session-ID=12345
-Reply OK: 679 bytes
-EXIT=0
+[INFO] Connecting to localhost:830 (timeout=10s)
+[INFO] Connected (session-id=12345)
+[NETCONF DEBUG] REQUEST: [<rpc ...><get-vrrp-information>...]
+[NETCONF DEBUG] REPLY: [<rpc-reply ...><vrrp-information>...]
+[INFO] RPC succeeded
+[INFO ] Scenario finished. Success: 1 / Failed: 0 / Total: 1
 ```
 
-**結果**: 正常終了（`EXIT=0`）。forループは継続しない。
+**結果**: 正常終了（`exit=0`）。forループは継続しない。
 
 ---
 
 ### 実験 2: no-delimiter モード
 
-**モック設定**: `]]>]]>` を一切送信しない
+**モック設定**: `]]>]]>` を一切送信しない  
+**実行**: `tools/run_netconf_scenario.sh --mode no-delimiter --timeout 10 --count 1`
 
 ```
-$ ./test_client localhost:830 &
-PID=$!
-# ... 12秒経過 ...
-kill -0 $PID → PROCESS STILL RUNNING（forループ継続中）
+[INFO] Connecting to localhost:830 (timeout=10s)
+[INFO] Connected (session-id=12345)
+[NETCONF DEBUG] REQUEST: [<rpc ...><get-vrrp-information>...]
+[ERROR] Timeout after 10s waiting for RPC reply
+[INFO ] Scenario finished. Success: 0 / Failed: 1 / Total: 1
 ```
 
-**結果**: 12 秒後もプロセスが継続。`WaitForFunc` の `Read()` が永続的にブロックし、forループが終了しない。
+**結果**: `Read()` が永続ブロックし、forループが継続。`cmd/netconf-client` の `time.After(10s)` goroutine がセッションを強制クローズして終了。
 
 ---
 
@@ -98,14 +104,14 @@ kill -0 $PID → PROCESS STILL RUNNING（forループ継続中）
 
 ### 4-1. TCPセグメント分割が再現条件でない理由
 
-split-delimiter 実験で `EXIT=0` となった根拠を、現在のコードで説明する。
+split-delimiter 実験で `exit=0` となった根拠を、v0.1.1 コードで説明する。
 
-#### ループ内の処理順序（transport.go:127–178）
+#### ループ内の処理順序（transport.go:90–125）
 
 ```go
 pos := 0
 for {
-    // (1) 読み込み: buf[pos : pos+4096] に新データを追記
+    // (1) 読み込み: buf[pos : pos+2048] に新データを追記
     n, err := t.Read(buf[pos : pos+(len(buf)/2)])
 
     // (2) デリミタ検索: buf[0:pos+n] — 旧データ(buf[0:pos]) + 新データ(buf[pos:pos+n]) を合算
@@ -137,13 +143,13 @@ for {
 
 Iteration 1 (pos=0):
   Read  → buf[0:1060] に 1060 バイト書き込み（XML + "]]>"）
-  検索  → f(buf[0:1060])  ─ "]]>]]>" なし → -1
+  検索  → f(buf[0:1060]) → "]]>]]>" なし → -1
   フラッシュなし（pos=0 のため）
   pos = 1060
 
 Iteration 2 (pos=1060):
   Read  → buf[1060:1063] に 3 バイト書き込み（"]]>"）
-  検索  → f(buf[0:1063])  ─ buf[1057:1063] = "]]>]]>" → FOUND
+  検索  → f(buf[0:1063]) → buf[1057:1063] = "]]>]]>" → FOUND
   out.Write(buf[0:1057]) → 正常終了
 ```
 
@@ -158,12 +164,14 @@ no-delimiter 実験で永続ブロックが確認された。
 ```
 デリミタが届かない
     ×
-タイムアウト機構がない（v0.1.1 は未実装）
+v0.1.1 ライブラリにタイムアウト機構がない
     ↓
 Read() が永続ブロック → forループ無限継続
+    ↓（cmd/netconf-client の time.After が発火）
+s.Close() → Timeout エラー
 ```
 
-v0.1.1 には `time.After` や `context.WithTimeout` 相当の機構が存在しない。SSH コネクションが Keep-Alive で維持される限り、`Read()` はブロックし続ける。
+v0.1.1 ライブラリには `time.After` や `context.WithTimeout` 相当の機構が存在しない。`cmd/netconf-client` 側で goroutine + `time.After(timeout)` パターンを実装することでタイムアウトを検知する。
 
 ---
 
@@ -183,10 +191,8 @@ v0.1.1 には `time.After` や `context.WithTimeout` 相当の機構が存在し
 
 | ファイル | 内容 |
 |---------|------|
-| [`logs/test4_split_delimiter.log`](../logs/test4_split_delimiter.log) | 現フォーク: split-delimiter モード（NETCONF_DEBUG=1）→ EXIT=0 |
-| [`logs/test5_no_delimiter.log`](../logs/test5_no_delimiter.log) | 現フォーク: no-delimiter モード（NETCONF_DEBUG=1）→ タイムアウト終了 |
-| [`logs/v011_split_delimiter.log`](../logs/v011_split_delimiter.log) | v0.1.1 実験: split-delimiter モード → EXIT=0（正常終了） |
-| [`logs/v011_no_delimiter.log`](../logs/v011_no_delimiter.log) | v0.1.1 実験: no-delimiter モード → 12秒後もプロセス継続（forループ無限） |
+| [`logs/test4_split_delimiter.log`](../logs/test4_split_delimiter.log) | split-delimiter モード → `[INFO] RPC succeeded` / exit=0 |
+| [`logs/test5_no_delimiter.log`](../logs/test5_no_delimiter.log) | no-delimiter モード → `[ERROR] Timeout after 10s` / exit=1（forループ継続確認） |
 
 ---
 
@@ -194,6 +200,6 @@ v0.1.1 には `time.After` や `context.WithTimeout` 相当の機構が存在し
 
 **TCPセグメント分割はforループ無限事象の再現条件ではない。**
 
-v0.1.1 の実機実験により、デリミタを 2 つの TCP パケットに分割して送信した場合でも `WaitForFunc` は正常にデリミタを検出し、`EXIT=0` で終了することを確認した。
+v0.1.1 の実機実験により、デリミタを 2 つの TCP パケットに分割して送信した場合でも `WaitForFunc` は正常にデリミタを検出し、`exit=0` で終了することを確認した。
 
-forループ無限事象の再現条件は「**デリミタが届かない状態**」であり、v0.1.1 がタイムアウト機構を持たないことと組み合わさって永続ブロックが発生する。
+forループ無限事象の再現条件は「**デリミタが届かない状態**」であり、v0.1.1 ライブラリがタイムアウト機構を持たないことと組み合わさって永続ブロックが発生する。`cmd/netconf-client` の `time.After(timeout)` goroutine により、タイムアウト時にセッションを強制クローズしてループを終了させることができる。
