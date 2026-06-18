@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	stdlog "log"
 	"os"
 	"time"
 
@@ -16,17 +17,20 @@ func main() {
 	user := flag.String("user", "", "SSH username")
 	password := flag.String("password", "", "SSH password")
 	timeout := flag.Duration("timeout", 10*time.Second, "NETCONF operation timeout")
-	debug := flag.Bool("debug", false, "enable debug logging")
+	debug := flag.Bool("debug", false, "enable debug logging (REQUEST/REPLY)")
 	rpc := flag.String("rpc", "<get-vrrp-information><summary/></get-vrrp-information>", "NETCONF RPC XML to execute")
 	flag.Parse()
+
+	if *debug || os.Getenv("NETCONF_DEBUG") == "1" {
+		netconf.SetLog(netconf.NewStdLog(
+			stdlog.New(os.Stderr, "[NETCONF DEBUG] ", 0),
+			netconf.LogDebug,
+		))
+	}
 
 	if *user == "" {
 		fmt.Fprintln(os.Stderr, "error: --user is required")
 		os.Exit(1)
-	}
-
-	if *debug || os.Getenv("NETCONF_DEBUG") == "1" {
-		netconf.SetDebugLogger(os.Stderr)
 	}
 
 	target := fmt.Sprintf("%s:%d", *host, *port)
@@ -36,13 +40,11 @@ func main() {
 			ssh.Password(*password),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
 	}
 
-	// SSH 接続確立・Keep-Alive 間隔は collector_agent に合わせて 10s 固定
-	// RPC 応答タイムアウトは time.After(*timeout) で制御
-	const sshConnTimeout = 10 * time.Second
 	fmt.Printf("[INFO] Connecting to %s (timeout=%s)\n", target, *timeout)
-	s, err := netconf.DialSSHTimeout(target, config, sshConnTimeout)
+	s, err := netconf.DialSSH(target, config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[ERROR] Connection failed: %v\n", err)
 		os.Exit(1)

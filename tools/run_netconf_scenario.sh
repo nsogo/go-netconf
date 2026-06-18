@@ -8,7 +8,13 @@ set -euo pipefail
 #   ./tools/run_netconf_scenario.sh [options]
 #
 # Options:
-#   --mode     normal | timeout   (default: normal)
+#   --mode     normal | timeout | split-delimiter | no-delimiter   (default: normal)
+#              normal:          Normal NETCONF operation
+#              timeout:         Mock delays response to trigger client timeout
+#              split-delimiter: Mock sends ]]>]]> split across two TCP sends
+#                               Use to verify WaitForFunc correctly assembles split delimiter
+#              no-delimiter:    Mock sends reply WITHOUT ]]>]]> delimiter
+#                               Use to observe WaitForFunc loop iteration logs
 #   --interval loop interval in seconds (default: 60)
 #   --count    number of iterations, 0 = infinite (default: 3)
 #   --timeout  NETCONF timeout in seconds applied to DialSSHTimeout (default: 10)
@@ -75,16 +81,16 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "$MODE" != "normal" && "$MODE" != "timeout" ]]; then
-    log "ERROR" "--mode must be 'normal' or 'timeout'"
+if [[ "$MODE" != "normal" && "$MODE" != "timeout" && "$MODE" != "split-delimiter" && "$MODE" != "no-delimiter" ]]; then
+    log "ERROR" "--mode must be 'normal', 'timeout', 'split-delimiter', or 'no-delimiter'"
     exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# Build netconf-client if not present
+# Build netconf-client (go-netconf v0.1.1 ベース) if not present
 # ---------------------------------------------------------------------------
 if [[ ! -x "${CLIENT_BIN}" ]]; then
-    log "INFO " "Building netconf-client..."
+    log "INFO " "Building netconf-client (go-netconf v0.1.1)..."
     cd "${REPO_ROOT}"
     go build -o netconf-client ./cmd/netconf-client/
     log "INFO " "Build complete: ${CLIENT_BIN}"
@@ -135,7 +141,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Configure mock for timeout mode
+# Configure mock for selected mode
 # ---------------------------------------------------------------------------
 if [[ "${MODE}" == "timeout" ]]; then
     log "INFO " "Enabling delays (mock delay=${MOCK_DELAY}s, NETCONF timeout=${TIMEOUT}s)"
@@ -143,10 +149,22 @@ if [[ "${MODE}" == "timeout" ]]; then
     curl -sf -X POST "${MOCK_URL}/delays_range" \
         -H "Content-Type: application/json" \
         -d "{\"delay\": ${MOCK_DELAY}}" > /dev/null
+    curl -sf -X POST "${MOCK_URL}/set_with_delimiter" > /dev/null
     log "INFO " "Delay configured: mock will wait ${MOCK_DELAY}s before responding"
-else
-    # Ensure delays are off for normal mode
+elif [[ "${MODE}" == "split-delimiter" ]]; then
+    log "INFO " "Enabling split-delimiter mode (mock will send ]]>]]> as two separate TCP sends)"
+    log "INFO " "WaitForFunc should correctly assemble the split delimiter. Watch for normal success."
     curl -sf -X POST "${MOCK_URL}/set_no_delays" > /dev/null
+    curl -sf -X POST "${MOCK_URL}/set_split_delimiter" > /dev/null
+elif [[ "${MODE}" == "no-delimiter" ]]; then
+    log "INFO " "Enabling no-delimiter mode (mock will send replies WITHOUT ]]>]]>)"
+    log "INFO " "WaitForFunc will loop until SSH timeout (${TIMEOUT}s). Watch for 'delimiter not found' logs."
+    curl -sf -X POST "${MOCK_URL}/set_no_delays" > /dev/null
+    curl -sf -X POST "${MOCK_URL}/set_no_delimiter" > /dev/null
+else
+    # Ensure delays off and delimiter mode restored for normal mode
+    curl -sf -X POST "${MOCK_URL}/set_no_delays" > /dev/null
+    curl -sf -X POST "${MOCK_URL}/set_with_delimiter" > /dev/null
 fi
 
 # ---------------------------------------------------------------------------
@@ -162,7 +180,7 @@ else
     COUNT_LABEL="${COUNT}"
 fi
 
-log "INFO " "Starting netconf scenario (mode=${MODE}, count=${COUNT_LABEL}, interval=${INTERVAL}s, timeout=${TIMEOUT}s, rpc=${RPC})"
+log "INFO " "Starting netconf scenario (mode=${MODE}, count=${COUNT_LABEL}, interval=${INTERVAL}s, timeout=${TIMEOUT}s)"
 
 while true; do
     ITERATION=$((ITERATION + 1))
@@ -178,17 +196,14 @@ while true; do
 
     log "INFO " "--- Iteration ${ITER_LABEL} ---"
 
-    TIMEOUT_FLAG="${TIMEOUT}s"
-
     set +e
     NETCONF_DEBUG=1 "${CLIENT_BIN}" \
         --host "${HOST}" \
         --port "${PORT}" \
         --user "${USER}" \
         --password "${PASSWORD}" \
-        --timeout "${TIMEOUT_FLAG}" \
-        --rpc "${RPC}" \
-        --debug
+        --timeout "${TIMEOUT}s" \
+        --rpc "${RPC}"
     EXIT_CODE=$?
     set -e
 

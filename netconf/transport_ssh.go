@@ -1,9 +1,3 @@
-// Go NETCONF Client
-//
-// Copyright (c) 2013-2018, Juniper Networks, Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package netconf
 
 import (
@@ -31,42 +25,26 @@ const (
 // TransportSSH maintains the information necessary to communicate with the
 // remote device over SSH
 type TransportSSH struct {
-	TransportBasicIO
+	transportBasicIO
 	sshClient  *ssh.Client
 	sshSession *ssh.Session
-
-	// SSH Client connection is managed externally
-	managedSession bool
 }
 
 // Close closes an existing SSH session and socket if they exist.
 func (t *TransportSSH) Close() error {
-	// If TransportSSH is nil ignore closing ssh session
-	if t == nil {
-		return nil
-	}
-
 	// Close the SSH Session if we have one
 	if t.sshSession != nil {
-		debugf("SSH: closing session")
 		if err := t.sshSession.Close(); err != nil {
-			debugf("SSH: session close error: %v", err)
-			// If we receive an error when trying to close the session, then
-			// lets try to close the socket, otherwise it will be left open
-			if !t.managedSession {
-				t.sshClient.Close()
-			}
 			return err
 		}
-		debugf("SSH: session closed")
 	}
 
 	// Close the socket
-	if !t.managedSession && t.sshClient != nil {
-		debugf("SSH: closing client connection")
-		return t.sshClient.Close()
+	if err := t.sshClient.Close(); err != nil {
+		return err
 	}
-	return fmt.Errorf("No connection to close")
+
+	return nil
 }
 
 // Dial connects and establishes SSH sessions
@@ -83,27 +61,26 @@ func (t *TransportSSH) Dial(target string, config *ssh.ClientConfig) error {
 		target = fmt.Sprintf("%s:%d", target, sshDefaultPort)
 	}
 
-	debugf("SSH Dial: connecting to %s", target)
 	var err error
 
 	t.sshClient, err = ssh.Dial("tcp", target, config)
 	if err != nil {
-		debugf("SSH Dial error: %v", err)
 		return err
 	}
-	debugf("SSH Dial: connected to %s", target)
 
 	err = t.setupSession()
-	return err
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (t *TransportSSH) setupSession() error {
 	var err error
 
-	debugf("SSH: creating new session")
 	t.sshSession, err = t.sshClient.NewSession()
 	if err != nil {
-		debugf("SSH: NewSession error: %v", err)
 		return err
 	}
 
@@ -118,35 +95,17 @@ func (t *TransportSSH) setupSession() error {
 	}
 
 	t.ReadWriteCloser = NewReadWriteCloser(reader, writer)
-	debugf("SSH: requesting subsystem %q", sshNetconfSubsystem)
-	err = t.sshSession.RequestSubsystem(sshNetconfSubsystem)
-	if err != nil {
-		debugf("SSH: RequestSubsystem error: %v", err)
-	} else {
-		debugf("SSH: subsystem %q established", sshNetconfSubsystem)
+
+	if err := t.sshSession.RequestSubsystem(sshNetconfSubsystem); err != nil {
+		return err
 	}
-	return err
+
+	return nil
 }
 
 // NewSSHSession creates a new NETCONF session using an existing net.Conn.
 func NewSSHSession(conn net.Conn, config *ssh.ClientConfig) (*Session, error) {
 	t, err := connToTransport(conn, config)
-	if err != nil {
-		return nil, err
-	}
-
-	return NewSession(t), nil
-}
-
-// NewSSHClientSession creates a new NETCONF session using an existing ssh.Client
-// initiated and managed externally.
-func NewSSHClientSession(client *ssh.Client) (*Session, error) {
-	t := &TransportSSH{
-		sshClient:      client,
-		managedSession: true,
-	}
-
-	err := t.setupSession()
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +119,6 @@ func DialSSH(target string, config *ssh.ClientConfig) (*Session, error) {
 	var t TransportSSH
 	err := t.Dial(target, config)
 	if err != nil {
-		t.Close()
 		return nil, err
 	}
 	return NewSession(&t), nil
@@ -178,9 +136,6 @@ func DialSSHTimeout(target string, config *ssh.ClientConfig, timeout time.Durati
 	conn := &deadlineConn{Conn: bareConn, timeout: timeout}
 	t, err := connToTransport(conn, config)
 	if err != nil {
-		if t != nil {
-			t.Close()
-		}
 		return nil, err
 	}
 
@@ -190,10 +145,8 @@ func DialSSHTimeout(target string, config *ssh.ClientConfig, timeout time.Durati
 		for range ticker.C {
 			_, _, err := t.sshClient.Conn.SendRequest("KEEP_ALIVE", true, nil)
 			if err != nil {
-				debugf("SSH: Keep-Alive failed: %v", err)
 				return
 			}
-			debugf("SSH: Keep-Alive sent")
 		}
 	}()
 
@@ -227,7 +180,8 @@ func SSHConfigPubKeyFile(user string, file string, passphrase string) (*ssh.Clie
 	}
 
 	if x509.IsEncryptedPEMBlock(block) {
-		b, err := x509.DecryptPEMBlock(block, []byte(passphrase))
+		b := block.Bytes
+		b, err = x509.DecryptPEMBlock(block, []byte(passphrase))
 		if err != nil {
 			return nil, err
 		}

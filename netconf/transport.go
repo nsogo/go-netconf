@@ -1,9 +1,3 @@
-// Go NETCONF Client
-//
-// Copyright (c) 2013-2018, Juniper Networks, Inc. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-
 package netconf
 
 import (
@@ -16,14 +10,12 @@ import (
 
 const (
 	// msgSeperator is used to separate sent messages via NETCONF
-	msgSeperator     = "]]>]]>"
-	msgSeperator_v11 = "\n##\n"
+	msgSeperator = "]]>]]>"
 )
 
 // DefaultCapabilities sets the default capabilities of the client library
 var DefaultCapabilities = []string{
 	"urn:ietf:params:netconf:base:1.0",
-	"urn:ietf:params:netconf:base:1.1",
 }
 
 // HelloMessage is used when bringing up a NETCONF session
@@ -41,60 +33,31 @@ type Transport interface {
 	Close() error
 	ReceiveHello() (*HelloMessage, error)
 	SendHello(*HelloMessage) error
-	SetVersion(version string)
 }
 
-type TransportBasicIO struct {
+type transportBasicIO struct {
 	io.ReadWriteCloser
-	//new add
-	version string
-}
-
-func (t *TransportBasicIO) SetVersion(version string) {
-	t.version = version
+	chunkedFraming bool
 }
 
 // Sends a well formated NETCONF rpc message as a slice of bytes adding on the
 // nessisary framining messages.
-func (t *TransportBasicIO) Send(data []byte) error {
-	var seperator []byte
-	var dataInfo []byte
-	if t.version == "v1.1" {
-		seperator = append(seperator, []byte(msgSeperator_v11)...)
-	} else {
-		seperator = append(seperator, []byte(msgSeperator)...)
+func (t *transportBasicIO) Send(data []byte) error {
+	t.Write(data)
+	// Pad to make sure the msgSeparator isn't sent across a 4096-byte boundary
+	if (len(data)+len(msgSeperator))%4096 < 6 {
+		t.Write([]byte("      "))
 	}
-
-	if t.version == "v1.1" {
-		header := fmt.Sprintf("\n#%d\n", len(string(data)))
-		dataInfo = append(dataInfo, header...)
-	}
-	dataInfo = append(dataInfo, data...)
-	dataInfo = append(dataInfo, seperator...)
-
-	debugf("Send (%d bytes): %s", len(data), string(data))
-	_, err := t.Write(dataInfo)
-	return err
+	t.Write([]byte(msgSeperator))
+	t.Write([]byte("\n"))
+	return nil // TODO: Implement error handling!
 }
 
-func (t *TransportBasicIO) Receive() ([]byte, error) {
-	var seperator []byte
-	if t.version == "v1.1" {
-		seperator = append(seperator, []byte(msgSeperator_v11)...)
-	} else {
-		seperator = append(seperator, []byte(msgSeperator)...)
-	}
-	debugf("Receive: waiting for delimiter %q", string(seperator))
-	data, err := t.WaitForBytes([]byte(seperator))
-	if err != nil {
-		debugf("Receive error: %v", err)
-	} else {
-		debugf("Receive (%d bytes): %s", len(data), string(data))
-	}
-	return data, err
+func (t *transportBasicIO) Receive() ([]byte, error) {
+	return t.WaitForBytes([]byte(msgSeperator))
 }
 
-func (t *TransportBasicIO) SendHello(hello *HelloMessage) error {
+func (t *transportBasicIO) SendHello(hello *HelloMessage) error {
 	val, err := xml.Marshal(hello)
 	if err != nil {
 		return err
@@ -106,7 +69,7 @@ func (t *TransportBasicIO) SendHello(hello *HelloMessage) error {
 	return err
 }
 
-func (t *TransportBasicIO) ReceiveHello() (*HelloMessage, error) {
+func (t *transportBasicIO) ReceiveHello() (*HelloMessage, error) {
 	hello := new(HelloMessage)
 
 	val, err := t.Receive()
@@ -114,40 +77,31 @@ func (t *TransportBasicIO) ReceiveHello() (*HelloMessage, error) {
 		return hello, err
 	}
 
-	err = xml.Unmarshal(val, hello)
+	err = xml.Unmarshal([]byte(val), hello)
 	return hello, err
 }
 
-func (t *TransportBasicIO) Writeln(b []byte) (int, error) {
+func (t *transportBasicIO) Writeln(b []byte) (int, error) {
 	t.Write(b)
 	t.Write([]byte("\n"))
 	return 0, nil
 }
 
-func (t *TransportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, error) {
+func (t *transportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, error) {
 	var out bytes.Buffer
-	buf := make([]byte, 8192)
+	buf := make([]byte, 4096)
 
 	pos := 0
 	for {
 		n, err := t.Read(buf[pos : pos+(len(buf)/2)])
 		if err != nil {
 			if err != io.EOF {
-				debugf("WaitForFunc read error: %v", err)
 				return nil, err
-			}
-			// Handle EOF but no message separator to mark
-			// the end of the message
-			if n == 0 {
-				out.Write(buf[0:pos])
-				debugf("WaitForFunc EOF: returning %d bytes", out.Len())
-				return out.Bytes(), nil
 			}
 			break
 		}
 
 		if n > 0 {
-			debugf("WaitForFunc: read %d bytes (total buffered: %d)", n, pos+n)
 			end, err := f(buf[0 : pos+n])
 			if err != nil {
 				return nil, err
@@ -155,7 +109,6 @@ func (t *TransportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, err
 
 			if end > -1 {
 				out.Write(buf[0:end])
-				debugf("WaitForFunc: delimiter found, returning %d bytes", out.Len())
 				return out.Bytes(), nil
 			}
 
@@ -168,17 +121,16 @@ func (t *TransportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, err
 		}
 	}
 
-	debugf("WaitForFunc failed: no delimiter found")
 	return nil, fmt.Errorf("WaitForFunc failed")
 }
 
-func (t *TransportBasicIO) WaitForBytes(b []byte) ([]byte, error) {
+func (t *transportBasicIO) WaitForBytes(b []byte) ([]byte, error) {
 	return t.WaitForFunc(func(buf []byte) (int, error) {
 		return bytes.Index(buf, b), nil
 	})
 }
 
-func (t *TransportBasicIO) WaitForString(s string) (string, error) {
+func (t *transportBasicIO) WaitForString(s string) (string, error) {
 	out, err := t.WaitForBytes([]byte(s))
 	if out != nil {
 		return string(out), err
@@ -186,7 +138,7 @@ func (t *TransportBasicIO) WaitForString(s string) (string, error) {
 	return "", err
 }
 
-func (t *TransportBasicIO) WaitForRegexp(re *regexp.Regexp) ([]byte, [][]byte, error) {
+func (t *transportBasicIO) WaitForRegexp(re *regexp.Regexp) ([]byte, [][]byte, error) {
 	var matches [][]byte
 	out, err := t.WaitForFunc(func(buf []byte) (int, error) {
 		loc := re.FindSubmatchIndex(buf)

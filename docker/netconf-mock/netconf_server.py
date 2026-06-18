@@ -85,6 +85,32 @@ def make_rpc_reply(uuid, xml):
 '''.format(uuid, xml, DELIM)
 
 
+def make_rpc_reply_no_delim(uuid, xml):
+    """デリミタ ]]>]]> を付けないRPCリプライを生成する（デリミタ完全欠損の再現用）。"""
+    return '''\
+<rpc-reply
+    xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"
+    xmlns:junos="http://xml.juniper.net/junos/14.2R3/junos"
+    xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0"
+    message-id="{}">
+{}
+</rpc-reply>
+'''.format(uuid, xml)
+
+
+def make_rpc_reply_body(uuid, xml):
+    """デリミタなしのRPCリプライ本文を生成する（分割送信用）。"""
+    return '''\
+<rpc-reply
+    xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"
+    xmlns:junos="http://xml.juniper.net/junos/14.2R3/junos"
+    xmlns:nc="urn:ietf:params:xml:ns:netconf:base:1.0"
+    message-id="{}">
+{}
+</rpc-reply>
+'''.format(uuid, xml)
+
+
 def reply_dict_default_entry():
     return {"default": OK_REPLY, "sequence": [], "close_session": False}
 
@@ -102,6 +128,9 @@ class NetconfMockServer(paramiko.ServerInterface):
         cls.use_delays = False
         cls.reply_delay_ranges = {'default': (0, 0)}
         cls.fail_mode = False
+        cls.no_delimiter_mode = False
+        cls.split_delimiter_mode = False
+        cls.half_delimiter_mode = False
         cls.reply_dict = defaultdict(reply_dict_default_entry)
         cls.refresh_status_replys()
 
@@ -179,9 +208,25 @@ class NetconfMockServer(paramiko.ServerInterface):
             if callable(xml):
                 xml = xml(xml_data)
 
-        reply = make_rpc_reply(uuid, xml)
-        logger.debug('%s sending reply:\n%s', self.ident, reply)
-        self.channel.sendall(reply)
+        if self.split_delimiter_mode:
+            # TCPセグメント分割を再現: ボディ+デリミタ前半 ]]> を送信後、デリミタ後半 ]]> を別送信
+            body = make_rpc_reply_body(uuid, xml)
+            half = len(DELIM) // 2  # ]]> (3バイト)
+            first_part = body + DELIM[:half]
+            second_part = DELIM[half:]
+            logger.warning('%s sending reply with SPLIT delimiter (split-delimiter mode): '
+                           'first=%d bytes, second=%d bytes', self.ident, len(first_part), len(second_part))
+            self.channel.sendall(first_part)
+            sleep(0.5)
+            self.channel.sendall(second_part)
+        elif self.no_delimiter_mode:
+            reply = make_rpc_reply_no_delim(uuid, xml)
+            logger.warning('%s sending reply WITHOUT delimiter (no-delimiter mode):\n%s', self.ident, reply)
+            self.channel.sendall(reply)
+        else:
+            reply = make_rpc_reply(uuid, xml)
+            logger.debug('%s sending reply:\n%s', self.ident, reply)
+            self.channel.sendall(reply)
 
     def handle_session(self):
         self.channel.sendall(HELLO_REPLY)
@@ -203,6 +248,9 @@ def help():
         '/set_no_delays': 'Disable response delays',
         '/delays_range': 'POST {"delay": N} or {"min": N, "max": M} to set delay range',
         '/vrrp_sessions': 'POST [{"interface":"ae0.0","vrid":1,"state":"MASTER","rip":"10.0.0.1","vip":"10.0.0.254"},...] to set VRRP reply data',
+        '/set_split_delimiter': 'Send RPC replies with ]]>]]> split across two TCP sends (TCP segment split reproduction)',
+        '/set_no_delimiter': 'Send RPC replies WITHOUT ]]>]]> delimiter (delimiter-missing reproduction)',
+        '/set_with_delimiter': 'Restore normal operation (send replies WITH ]]>]]> delimiter)',
         '/reset': 'Reset all state to defaults',
     })
 
@@ -218,6 +266,30 @@ def set_use_delays():
 def set_no_delays():
     NetconfMockServer.use_delays = False
     logger.info('Delays disabled')
+    return "Ok"
+
+
+@controller.route('/set_split_delimiter', methods=['GET', 'POST'])
+def set_split_delimiter():
+    NetconfMockServer.split_delimiter_mode = True
+    NetconfMockServer.no_delimiter_mode = False
+    logger.info('Split-delimiter mode enabled - ]]>]]> will be sent as two separate TCP sends')
+    return "Ok"
+
+
+@controller.route('/set_no_delimiter', methods=['GET', 'POST'])
+def set_no_delimiter():
+    NetconfMockServer.no_delimiter_mode = True
+    NetconfMockServer.split_delimiter_mode = False
+    logger.info('No-delimiter mode enabled - replies will be sent WITHOUT ]]>]]>')
+    return "Ok"
+
+
+@controller.route('/set_with_delimiter', methods=['GET', 'POST'])
+def set_with_delimiter():
+    NetconfMockServer.no_delimiter_mode = False
+    NetconfMockServer.split_delimiter_mode = False
+    logger.info('No-delimiter mode disabled - normal operation restored')
     return "Ok"
 
 

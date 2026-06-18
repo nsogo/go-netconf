@@ -1,57 +1,19 @@
-[2026-06-16 17:11:51] [INFO ] Starting netconf-mock...
+[2026-06-18 12:46:00] [INFO ] Starting netconf-mock...
  Container netconf-mock  Running
-[2026-06-16 17:11:51] [INFO ] Waiting for netconf-mock to be ready at http://localhost:8088 ...
-[2026-06-16 17:11:51] [INFO ] netconf-mock is ready
-[2026-06-16 17:11:51] [INFO ] Setting default VRRP sessions (ae0.0 MASTER, ae1.0 BACKUP)...
-[2026-06-16 17:11:51] [INFO ] Default VRRP sessions configured (2 sessions)
-[2026-06-16 17:11:51] [INFO ] Enabling delays (mock delay=15s, NETCONF timeout=5s)
-[2026-06-16 17:11:51] [INFO ] Delay configured: mock will wait 15s before responding
-[2026-06-16 17:11:51] [INFO ] Starting netconf scenario (mode=timeout, count=1, interval=60s, timeout=5s, rpc=<get-vrrp-information><summary/></get-vrrp-information>)
-[2026-06-16 17:11:51] [INFO ] --- Iteration 1/1 ---
+[2026-06-18 12:46:00] [INFO ] Waiting for netconf-mock to be ready at http://localhost:8088 ...
+[2026-06-18 12:46:00] [INFO ] netconf-mock is ready
+[2026-06-18 12:46:00] [INFO ] Setting default VRRP sessions (ae0.0 MASTER, ae1.0 BACKUP)...
+[2026-06-18 12:46:00] [INFO ] Default VRRP sessions configured (2 sessions)
+[2026-06-18 12:46:00] [INFO ] Enabling delays (mock delay=15s, NETCONF timeout=5s)
+[2026-06-18 12:46:00] [INFO ] Delay configured: mock will wait 15s before responding
+[2026-06-18 12:46:00] [INFO ] Starting netconf scenario (mode=timeout, count=1, interval=60s, timeout=5s)
+[2026-06-18 12:46:00] [INFO ] --- Iteration 1/1 ---
 [INFO] Connecting to localhost:830 (timeout=5s)
-[NETCONF DEBUG] 2026/06/16 17:11:51.549775 SSH: creating new session
-[NETCONF DEBUG] 2026/06/16 17:11:51.550268 SSH: requesting subsystem "netconf"
-[NETCONF DEBUG] 2026/06/16 17:11:51.550627 SSH: subsystem "netconf" established
-[NETCONF DEBUG] 2026/06/16 17:11:51.550631 Session: receiving server Hello
-[NETCONF DEBUG] 2026/06/16 17:11:51.550632 Receive: waiting for delimiter "]]>]]>"
-[NETCONF DEBUG] 2026/06/16 17:11:51.593546 WaitForFunc: read 1217 bytes (total buffered: 1217)
-[NETCONF DEBUG] 2026/06/16 17:11:51.593550 WaitForFunc: delimiter found, returning 1210 bytes
-[NETCONF DEBUG] 2026/06/16 17:11:51.593551 Receive (1210 bytes): <!-- No zombies were killed during the creation of this user interface -->
-<!-- user admin, class super-user -->
-<hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
-  <capabilities>
-    <capability>urn:ietf:params:netconf:base:1.0</capability>
-    <capability>urn:ietf:params:netconf:capability:candidate:1.0</capability>
-    <capability>urn:ietf:params:netconf:capability:confirmed-commit:1.0</capability>
-    <capability>urn:ietf:params:netconf:capability:validate:1.0</capability>
-    <capability>urn:ietf:params:netconf:capability:url:1.0?scheme=http,ftp,file</capability>
-    <capability>urn:ietf:params:xml:ns:netconf:base:1.0</capability>
-    <capability>urn:ietf:params:xml:ns:netconf:capability:candidate:1.0</capability>
-    <capability>urn:ietf:params:xml:ns:netconf:capability:confirmed-commit:1.0</capability>
-    <capability>urn:ietf:params:xml:ns:netconf:capability:validate:1.0</capability>
-    <capability>urn:ietf:params:xml:ns:netconf:capability:url:1.0?protocol=http,ftp,file</capability>
-    <capability>http://xml.juniper.net/netconf/junos/1.0</capability>
-    <capability>http://xml.juniper.net/dmi/system/1.0</capability>
-  </capabilities>
-  <session-id>12345</session-id>
-</hello>
-[NETCONF DEBUG] 2026/06/16 17:11:51.593595 Session: server Hello received, session-id=12345, capabilities=[urn:ietf:params:netconf:base:1.0 urn:ietf:params:netconf:capability:candidate:1.0 urn:ietf:params:netconf:capability:confirmed-commit:1.0 urn:ietf:params:netconf:capability:validate:1.0 urn:ietf:params:netconf:capability:url:1.0?scheme=http,ftp,file urn:ietf:params:xml:ns:netconf:base:1.0 urn:ietf:params:xml:ns:netconf:capability:candidate:1.0 urn:ietf:params:xml:ns:netconf:capability:confirmed-commit:1.0 urn:ietf:params:xml:ns:netconf:capability:validate:1.0 urn:ietf:params:xml:ns:netconf:capability:url:1.0?protocol=http,ftp,file http://xml.juniper.net/netconf/junos/1.0 http://xml.juniper.net/dmi/system/1.0]
-[NETCONF DEBUG] 2026/06/16 17:11:51.593599 Session: sending client Hello
-[NETCONF DEBUG] 2026/06/16 17:11:51.593607 Send (245 bytes): <?xml version="1.0" encoding="UTF-8"?>
-<hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities><capability>urn:ietf:params:netconf:base:1.0</capability><capability>urn:ietf:params:netconf:base:1.1</capability></capabilities></hello>
-[NETCONF DEBUG] 2026/06/16 17:11:51.593617 Session: negotiated NETCONF version "v1.0"
 [INFO] Connected (session-id=12345)
-[NETCONF DEBUG] 2026/06/16 17:11:51.593637 Exec: sending RPC message-id=1204c5de-c0ee-42a0-baf7-e2459bcbf2ea
-[NETCONF DEBUG] 2026/06/16 17:11:51.593639 Send (164 bytes): <rpc message-id="1204c5de-c0ee-42a0-baf7-e2459bcbf2ea" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get-vrrp-information><summary/></get-vrrp-information></rpc>
-[NETCONF DEBUG] 2026/06/16 17:11:51.593650 Exec: waiting for RPC reply message-id=1204c5de-c0ee-42a0-baf7-e2459bcbf2ea
-[NETCONF DEBUG] 2026/06/16 17:11:51.593651 Receive: waiting for delimiter "]]>]]>"
-[NETCONF DEBUG] 2026/06/16 17:11:56.555212 SSH: Keep-Alive sent
-[NETCONF DEBUG] 2026/06/16 17:11:56.594719 SSH: closing session
-[NETCONF DEBUG] 2026/06/16 17:11:56.594845 SSH: session closed
-[NETCONF DEBUG] 2026/06/16 17:11:56.594851 SSH: closing client connection
+[NETCONF DEBUG] REQUEST: [<?xml version="1.0" encoding="UTF-8"?>
+<rpc message-id="bd3a154f-c407-488c-a856-c8e3d11e5cc8" xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><get-vrrp-information><summary/></get-vrrp-information></rpc>]
 [ERROR] Timeout after 5s waiting for RPC reply
-[2026-06-16 17:11:56] [ERROR] Iteration 1/1 FAILED (exit=1)
-[2026-06-16 17:11:56] [INFO ] ============================================
-[2026-06-16 17:11:56] [INFO ] Scenario finished. Success: 0 / Failed: 1 / Total: 1
-[2026-06-16 17:11:56] [INFO ] ============================================
-[EXIT] 1
+[2026-06-18 12:46:05] [ERROR] Iteration 1/1 FAILED (exit=1)
+[2026-06-18 12:46:05] [INFO ] ============================================
+[2026-06-18 12:46:05] [INFO ] Scenario finished. Success: 0 / Failed: 1 / Total: 1
+[2026-06-18 12:46:05] [INFO ] ============================================
