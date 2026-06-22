@@ -70,38 +70,38 @@ func NewStdLog(l *stdlog.Logger, level LogLevel) *StdLog {
 // Debugf adds the formatted debug logging function string
 func (l *StdLog) Debugf(format string, v ...interface{}) {
 	if l.level >= LogDebug {
-		l.Printf(format, v)
+		l.Printf(format, v...)
 	}
 }
 
 // Infof adds the formatted information logging function string
 func (l *StdLog) Infof(format string, v ...interface{}) {
 	if l.level >= LogInfo {
-		l.Printf(format, v)
+		l.Printf(format, v...)
 	}
 }
 
 // Warnf adds the formatted warning logging function string
 func (l *StdLog) Warnf(format string, v ...interface{}) {
 	if l.level >= LogWarn {
-		l.Printf(format, v)
+		l.Printf(format, v...)
 	}
 }
 
 // Errorf adds the formatted error logging function string
 func (l *StdLog) Errorf(format string, v ...interface{}) {
 	if l.level >= LogError {
-		l.Printf(format, v)
+		l.Printf(format, v...)
 	}
 }
 
 // Fatalf adds the formatted fatal logging function string
 func (l *StdLog) Fatalf(format string, v ...interface{}) {
-	l.Fatalf(format, v)
+	l.Fatalf(format, v...)
 
 }
 
 // Panicf adds the formatted panic logging function string
 func (l *StdLog) Panicf(format string, v ...interface{}) {
-	l.Panicf(format, v)
+	l.Panicf(format, v...)
 }

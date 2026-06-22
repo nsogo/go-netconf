@@ -102,6 +102,7 @@ func (t *transportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, err
 		}
 
 		if n > 0 {
+			log.Debugf("SSH Receive chunk: %d bytes\n%s", n, buf[pos:pos+n])
 			end, err := f(buf[0 : pos+n])
 			if err != nil {
 				return nil, err
@@ -109,6 +110,7 @@ func (t *transportBasicIO) WaitForFunc(f func([]byte) (int, error)) ([]byte, err
 
 			if end > -1 {
 				out.Write(buf[0:end])
+				log.Debugf("SSH Receive complete: %d bytes total\n%s", out.Len(), out.Bytes())
 				return out.Bytes(), nil
 			}
 
